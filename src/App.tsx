@@ -61,7 +61,7 @@ function HolidayPicker({ month, holidays, onChange }: {
                 ${isHol
                   ? 'bg-honey-700 text-white shadow-md shadow-gold-200'
                   : isWkd
-                    ? 'bg-gold-100/60 text-gold-400 cursor-default'
+                    ? 'bg-honey-100/70 text-honey-700/80 border border-honey-200/40 cursor-default'
                     : 'bg-white/80 border border-gold-200 text-honey-900 hover:border-gold-400 hover:bg-gold-50'
                 }`}
               disabled={isWkd}
@@ -89,30 +89,30 @@ function EmployeeSelector({ employees, selected, onToggle, onSelectAll, onClose,
   const allSel = selected.size === employees.length && employees.length > 0
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-honey-950/30 backdrop-blur-sm" onClick={onClose}>
-      <div className="bg-white/95 backdrop-blur-2xl rounded-2xl shadow-2xl border border-gold-200/60 w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
+      <div className="bg-white/80 backdrop-blur-2xl rounded-2xl shadow-2xl border border-gold-200/45 w-full max-w-sm overflow-hidden animate-in fade-in zoom-in duration-200" onClick={e => e.stopPropagation()}>
 
-        <div className="px-5 py-4 border-b border-gold-100 flex items-start justify-between">
+        <div className="px-5 py-4 border-b border-gold-200/40 flex items-start justify-between bg-white/40">
           <div>
             <h2 className="font-bold text-honey-950 text-base">Funcionários no arquivo</h2>
             <p className="text-xs text-honey-700/60 mt-0.5">{employees.length} registro{employees.length !== 1 ? 's' : ''} encontrado{employees.length !== 1 ? 's' : ''}</p>
           </div>
-          <button onClick={onClose} className="text-gold-400 hover:text-honey-800 w-8 h-8 rounded-lg hover:bg-gold-50 flex items-center justify-center text-xl transition-colors">×</button>
+          <button onClick={onClose} className="text-gold-400 hover:text-honey-800 w-8 h-8 rounded-lg hover:bg-gold-100 flex items-center justify-center text-xl transition-colors">×</button>
         </div>
 
-        <div className="px-5 py-2 border-b border-gold-100 flex items-center justify-between">
+        <div className="px-5 py-2 border-b border-gold-100 flex items-center justify-between bg-white/20">
           <button onClick={onSelectAll} className="text-xs font-semibold text-honey-700 hover:text-honey-900 transition-colors">
             {allSel ? 'Desmarcar todos' : 'Selecionar todos'}
           </button>
           <span className="text-xs text-honey-700/50">{selected.size} selecionado{selected.size !== 1 ? 's' : ''}</span>
         </div>
 
-        <div className="max-h-64 overflow-y-auto divide-y divide-gold-50">
+        <div className="max-h-64 overflow-y-auto divide-y divide-gold-100/50 bg-white/10">
           {employees.map(emp => {
             const sel = selected.has(emp.key)
             return (
               <button key={emp.key} onClick={() => onToggle(emp.key)}
-                className={`w-full text-left px-5 py-3 flex items-center gap-3 transition-colors ${sel ? 'bg-gold-50' : 'hover:bg-gold-50/50'}`}>
-                <span className={`w-4 h-4 rounded border-2 flex-shrink-0 flex items-center justify-center transition-all ${sel ? 'bg-honey-700 border-honey-700' : 'border-gold-300'}`}>
+                className={`w-full text-left px-5 py-3 flex items-center gap-3 transition-colors ${sel ? 'bg-gold-50/60' : 'hover:bg-gold-50/30'}`}>
+                <span className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-all ${sel ? 'bg-honey-700 border-honey-700' : 'border-gold-300'}`}>
                   {sel && <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 12 12"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                 </span>
                 <div className="min-w-0">
@@ -124,8 +124,8 @@ function EmployeeSelector({ employees, selected, onToggle, onSelectAll, onClose,
           })}
         </div>
 
-        <div className="px-5 py-4 border-t border-gold-100 flex gap-2">
-          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-medium border border-gold-200 bg-white text-honey-800 hover:bg-gold-50 transition-colors">Cancelar</button>
+        <div className="px-5 py-4 border-t border-gold-200/40 flex gap-2 bg-white/40">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-medium border border-gold-200 bg-white/60 hover:bg-gold-100 transition-colors">Cancelar</button>
           <button onClick={onCalculate} disabled={selected.size === 0}
             className="flex-1 py-2.5 rounded-xl text-sm font-bold bg-honey-800 hover:bg-honey-900 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-gold-200">
             Calcular{selected.size > 0 ? ` (${selected.size})` : ''}
@@ -233,7 +233,13 @@ export default function App() {
   // ── Home ──────────────────────────────────────────────────────────────────
 
   if (screen === 'home') return (
-    <div className="min-h-screen flex flex-col items-center justify-center px-4 py-8">
+    <div className="min-h-screen flex flex-col items-center justify-center px-4 py-8 relative">
+      {/* Background blobs for depth */}
+      <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
+        <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-gold-200/25 blur-[120px]" />
+        <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] rounded-full bg-honey-200/20 blur-[150px]" />
+      </div>
+
       <div className="w-full max-w-lg">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-honey-800 mb-4 shadow-lg shadow-gold-200 border border-honey-700">
@@ -245,29 +251,29 @@ export default function App() {
           <p className="text-sm text-honey-700 mt-1">Importe um arquivo AFD para começar</p>
         </div>
 
-        <div className="bg-white/90 backdrop-blur-xl rounded-2xl shadow-lg border border-gold-200/60 p-5 mb-4 space-y-4">
-          <p className="text-[11px] font-bold text-honey-700 uppercase tracking-widest">Configurações</p>
+        <div className="bg-white/75 backdrop-blur-xl rounded-2xl shadow-xl border border-gold-200/45 p-5 mb-4 space-y-4">
+          <p className="text-[11px] font-bold text-honey-700/80 uppercase tracking-widest">Configurações</p>
 
           <div>
             <label className="block text-xs font-semibold text-honey-900/80 mb-1">Empresa</label>
             <input type="text" value={empresa} onChange={e => setEmpresa(e.target.value)}
               placeholder="Nome da empresa (opcional)"
-              className="w-full border border-gold-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-gold-400/40 hover:border-gold-300 transition-all text-honey-950 placeholder:text-honey-600" />
+              className="w-full border border-gold-200 rounded-xl px-3 py-2.5 text-sm bg-white/70 focus:outline-none focus:ring-2 focus:ring-gold-400/40 hover:border-gold-300 transition-all text-honey-950 placeholder:text-honey-600/70" />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-xs font-semibold text-honey-900/80 mb-1">Competência</label>
               <input type="month" value={month} onChange={e => handleMonthChange(e.target.value)}
-                className="w-full border border-gold-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-gold-400/40 hover:border-gold-300 transition-all text-honey-950" />
+                className="w-full border border-gold-200 rounded-xl px-3 py-2.5 text-sm bg-white/70 focus:outline-none focus:ring-2 focus:ring-gold-400/40 hover:border-gold-300 transition-all text-honey-950" />
             </div>
             <div>
               <label className="block text-xs font-semibold text-honey-900/80 mb-1">Jornada diária</label>
               <input type="time" value={carga} onChange={e => setCarga(e.target.value)}
-                className="w-full border border-gold-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-gold-400/40 hover:border-gold-300 transition-all text-honey-950" />
+                className="w-full border border-gold-200 rounded-xl px-3 py-2.5 text-sm bg-white/70 focus:outline-none focus:ring-2 focus:ring-gold-400/40 hover:border-gold-300 transition-all text-honey-950" />
             </div>
           </div>
 
-          <div className="border-t border-gold-100 pt-4">
+          <div className="border-t border-gold-200/30 pt-4">
             <HolidayPicker month={month} holidays={holidays} onChange={setHolidays} />
           </div>
         </div>
@@ -298,7 +304,12 @@ export default function App() {
     const current = reviewQueue[reviewIndex]
     const total = reviewQueue.length
     return (
-      <div className="min-h-screen">
+      <div className="min-h-screen relative">
+        {/* Background blobs */}
+        <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
+          <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-gold-200/25 blur-[120px]" />
+          <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] rounded-full bg-honey-200/20 blur-[150px]" />
+        </div>
         {/* Progress bar */}
         <div className="fixed top-0 left-0 right-0 z-30 h-1 bg-gold-100">
           <div className="h-full bg-honey-700 transition-all" style={{ width: `${((reviewIndex + 1) / total) * 100}%` }} />
@@ -322,8 +333,13 @@ export default function App() {
   // ── Results ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen print:bg-white">
-      <div className="print:hidden sticky top-0 z-10 bg-white/90 backdrop-blur-xl border-b border-gold-200/50 px-4 py-3 flex items-center gap-3 shadow-sm">
+    <div className="min-h-screen print:bg-white relative">
+      <div className="print:hidden fixed inset-0 -z-10 overflow-hidden pointer-events-none">
+        <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-gold-200/25 blur-[120px]" />
+        <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] rounded-full bg-honey-200/20 blur-[150px]" />
+      </div>
+
+      <div className="print:hidden sticky top-0 z-10 bg-white/70 backdrop-blur-xl border-b border-gold-200/40 px-4 py-3 flex items-center gap-3 shadow-sm">
         <button onClick={() => setScreen('home')}
           className="flex items-center gap-1.5 text-sm text-honey-800 hover:text-honey-950 transition-colors">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -337,7 +353,7 @@ export default function App() {
         </span>
         <div className="ml-auto flex items-center gap-2">
           <button onClick={() => { setShowSelector(true); setScreen('home') }}
-            className="text-sm font-medium text-honey-800 hover:text-honey-950 border border-gold-200 bg-white px-3 py-1.5 rounded-xl transition-colors">
+            className="text-sm font-medium text-honey-800 hover:text-honey-950 border border-gold-200 bg-white/60 px-3 py-1.5 rounded-xl transition-colors">
             Novo cálculo
           </button>
           <button onClick={() => window.print()}

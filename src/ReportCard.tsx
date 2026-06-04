@@ -1,8 +1,17 @@
-import { fromMin, toMin } from './calc'
+import {
+  fromMin,
+  toMin,
+  getEffectiveDailyMinutes,
+  calcDayBalance,
+  absenceLabel,
+  isWeekendOrHoliday,
+  isFullDayAbsent,
+  formatIntervalsShort,
+} from './calc'
 import type { EmployeeReport, DayRow } from './calc'
 
-const MONTH_NAMES = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
-  'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
+const MONTH_NAMES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
+  'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro']
 
 function monthLabel(val: string) {
   const [y, m] = val.split('-').map(Number)
@@ -16,62 +25,123 @@ function todayFmt() {
 
 interface Props {
   report: EmployeeReport
-  month: string; carga: string; empresa: string; isLast: boolean
+  month: string
+  carga: string
+  empresa: string
+  isLast: boolean
+}
+
+function allObservations(report: EmployeeReport): string[] {
+  const lines: string[] = []
+  if (report.notes.trim()) lines.push(report.notes.trim())
+  for (const n of report.autoNotes) lines.push(n)
+  return lines
+}
+
+function DayCells({ row, isOff }: { row: DayRow; isOff: boolean }) {
+  if (isFullDayAbsent(row)) {
+    return (
+      <td colSpan={4} className="px-2 py-1.5 text-center font-semibold text-xs">
+        <span className={row.absence === 'justified' ? 'text-amber-800' : 'text-red-700'}>
+          {absenceLabel(row.absence!, row.absenceScope)}
+        </span>
+      </td>
+    )
+  }
+
+  const partial = row.absence !== null && !isFullDayAbsent(row)
+  const fields = [row.ent1, row.sai1, row.ent2, row.sai2] as const
+
+  return (
+    <>
+      {fields.map((t, i) => {
+        const period = i < 2 ? 1 : 2
+        const blocked =
+          partial &&
+          ((row.absenceScope === 'period1' && period === 1) ||
+            (row.absenceScope === 'period2' && period === 2))
+        return (
+          <td key={i} className={`px-2 py-1.5 text-center font-mono text-xs ${t ? 'text-honey-900' : 'text-gold-300'}`}>
+            {isOff ? '—' : blocked ? (
+              <span className="text-[10px] font-sans font-medium text-amber-700/80">just.</span>
+            ) : (
+              t || '—'
+            )}
+          </td>
+        )
+      })}
+    </>
+  )
 }
 
 export function ReportCard({ report, month, carga, empresa, isLast }: Props) {
   const cargaMin = toMin(carga) ?? 480
-  const extras  = Math.max(0, report.totalBalance)
+  const effectiveMin = getEffectiveDailyMinutes(report.schedule, cargaMin)
+  const extras = Math.max(0, report.totalBalance)
   const debitos = Math.min(0, report.totalBalance)
   const saldoPos = report.totalBalance >= 0
+  const observations = allObservations(report)
 
-  const colSaldo = (v: number) => v < 0 ? 'text-red-500' : v > 0 ? 'text-emerald-600' : 'text-honey-400'
+  const colSaldo = (v: number) => (v < 0 ? 'text-red-600' : v > 0 ? 'text-emerald-600' : 'text-honey-500')
 
   return (
     <>
-      {/* ── Screen card ─────────────────────────────────── */}
-      <div className="print:hidden bg-white/80 backdrop-blur-xl rounded-2xl border border-gold-200/60 shadow-xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gold-200/40 flex flex-wrap items-start justify-between gap-3">
+      <div className="print:hidden bg-white/80 backdrop-blur-xl rounded-2xl border border-gold-200/45 shadow-lg overflow-hidden">
+        <div className="px-5 py-4 border-b border-gold-200/40 flex flex-wrap items-start justify-between gap-3 bg-white/40">
           <div>
-            <h2 className="font-bold text-honey-900 text-base">{report.displayName}</h2>
-            <p className="text-[11px] text-honey-700 font-mono mt-0.5">{report.key}</p>
+            <h2 className="font-bold text-honey-950 text-lg">{report.displayName}</h2>
+            <p className="text-[11px] text-honey-600 font-mono mt-0.5">{report.key}</p>
+            {report.specialMode && (
+              <span className="inline-block mt-1.5 text-[10px] font-semibold bg-honey-100 text-honey-800 border border-honey-200 rounded-md px-2 py-0.5">
+                Recursos Especiais
+              </span>
+            )}
           </div>
           <div className="flex gap-2">
             <StatPill label="Trabalhado" value={fromMin(report.totalWorked)} />
-            <StatPill label="Saldo" value={(saldoPos?'+':'') + fromMin(report.totalBalance)} variant={saldoPos ? 'green' : 'red'} />
+            <StatPill label="Saldo" value={(saldoPos ? '+' : '') + fromMin(report.totalBalance)} variant={saldoPos ? 'green' : 'red'} />
           </div>
         </div>
 
-        <div className="overflow-x-auto bg-white/40">
-          <table className="w-full text-xs border-collapse">
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs border-collapse min-w-[640px]">
             <thead>
-              <tr className="bg-white/60 backdrop-blur-sm border-b border-gold-200/40">
-                {['Dia','Ent 1','Saí 1','Ent 2','Saí 2','Total','Saldo'].map(h => (
-                  <th key={h} className="px-2 py-2 text-[10px] font-semibold text-honey-700 uppercase tracking-wide text-center first:text-left first:pl-5">{h}</th>
+              <tr className="bg-gold-50/45 border-b border-gold-200">
+                {['Dia', 'Ent 1', 'Saí 1', 'Ent 2', 'Saí 2', 'Total', 'Saldo'].map(h => (
+                  <th key={h} className="px-2 py-2.5 text-[10px] font-bold text-honey-700 uppercase tracking-wide text-center first:text-left first:pl-5">
+                    {h}
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {report.rows.map(row => {
-                const isWkd = row.weekday === 0 || row.weekday === 6
-                const isOff = isWkd || row.isHoliday || row.isAtestado
-                const saldo = row.workedMin !== null && !isOff ? row.workedMin - cargaMin : null
+                const isOff = isWeekendOrHoliday(row)
+                const saldo = calcDayBalance(row, effectiveMin)
                 return (
-                  <tr key={row.date} className={`border-b border-gold-200/30 last:border-0
-                    ${row.isAtestado ? 'bg-gold-50/60' : row.isHoliday ? 'bg-gold-50/40' : isWkd ? 'bg-gold-50/30 text-honey-600' : 'hover:bg-white/70'}`}>
-                    <td className="pl-5 pr-2 py-1 font-medium whitespace-nowrap">
+                  <tr key={row.date}
+                    className={`border-b border-gold-100/60 last:border-0 hover:bg-gold-50/20 transition-colors
+                      ${row.absence === 'justified' ? 'bg-amber-50/40' : ''}
+                      ${row.absence === 'unjustified' ? 'bg-red-50/30' : ''}
+                      ${!row.absence && row.isHoliday ? 'bg-gold-50/30' : ''}
+                      ${!row.absence && (row.weekday === 0 || row.weekday === 6) ? 'bg-gold-50/15' : ''}`}>
+                    <td className="pl-5 pr-2 py-1.5 font-medium text-honey-900 whitespace-nowrap align-middle">
                       {row.dayLabel}
-                      {row.isHoliday && <span className="ml-1 text-[9px] bg-gold-200 text-honey-700 rounded px-1">feriado</span>}
-                      {row.isAtestado && <span className="ml-1 text-[9px] bg-gold-200 text-honey-900 rounded px-1">atestado</span>}
-                      {row.generated && !isOff && <span className="ml-1 text-[9px] text-gold-500" title="Estimado">●</span>}
+                      {row.isHoliday && <span className="ml-1 text-[9px] bg-gold-200/80 text-honey-700 rounded px-1">feriado</span>}
+                      {row.absence && !isFullDayAbsent(row) && (
+                        <span className="ml-1 text-[9px] text-amber-800">{absenceLabel(row.absence, row.absenceScope)}</span>
+                      )}
+                      {report.specialMode && row.intervals.length > 2 && (
+                        <span className="block text-[9px] text-honey-600 font-normal font-sans mt-0.5 max-w-[140px] truncate" title={formatIntervalsShort(row.intervals)}>
+                          {formatIntervalsShort(row.intervals)}
+                        </span>
+                      )}
                     </td>
-                    {[row.ent1, row.sai1, row.ent2, row.sai2].map((t, i) => (
-                      <td key={i} className={`px-2 py-1 text-center font-mono ${t ? '' : 'text-gold-200'}`}>{t || '—'}</td>
-                    ))}
-                    <td className="px-2 py-1 text-center font-mono text-honey-700">
-                      {row.workedMin !== null ? fromMin(row.workedMin) : <span className="text-gold-200">—</span>}
+                    <DayCells row={row} isOff={isOff} />
+                    <td className="px-2 py-1.5 text-center font-mono font-medium text-honey-800 align-middle">
+                      {row.workedMin !== null ? fromMin(row.workedMin) : <span className="text-gold-300">—</span>}
                     </td>
-                    <td className={`px-2 py-1 text-center font-mono font-semibold ${saldo !== null ? colSaldo(saldo) : 'text-gold-200'}`}>
+                    <td className={`px-2 py-1.5 text-center font-mono font-semibold align-middle ${saldo !== null ? colSaldo(saldo) : 'text-gold-300'}`}>
                       {saldo !== null ? (saldo > 0 ? '+' : '') + fromMin(saldo) : '—'}
                     </td>
                   </tr>
@@ -81,48 +151,75 @@ export function ReportCard({ report, month, carga, empresa, isLast }: Props) {
           </table>
         </div>
 
-        <div className="px-5 py-2.5 bg-white/60 backdrop-blur-sm border-t border-gold-200/40 flex flex-wrap gap-3 text-xs text-honey-800">
-          <span><b className="text-honey-900">{report.workedDays}</b> dias trabalhados</span>
-          <span><b className="text-honey-900">{fromMin(report.totalWorked)}</b> horas</span>
-          <span><b className={saldoPos ? 'text-emerald-600' : 'text-red-500'}>{(saldoPos?'+':'') + fromMin(report.totalBalance)}</b> saldo</span>
-          {extras > 0 && <span><b className="text-emerald-600">{fromMin(extras)}</b> extras</span>}
-          {debitos < 0 && <span><b className="text-red-500">{fromMin(debitos)}</b> devidas</span>}
-          <span className="ml-auto text-gold-500 text-[10px]">● estimado</span>
+        {observations.length > 0 && (
+          <div className="px-5 py-3 border-t border-gold-200/40 bg-gold-50/20 backdrop-blur-sm">
+            <p className="text-[10px] font-bold text-honey-700 uppercase tracking-widest mb-1.5">Observações</p>
+            <div className="text-sm text-honey-800 space-y-1 leading-relaxed">
+              {observations.map((line, i) => (
+                <p key={i} className={i > 0 && report.autoNotes.includes(line) ? 'text-honey-700 text-xs pl-2 border-l-2 border-gold-300' : ''}>
+                  {line}
+                </p>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="px-5 py-2.5 bg-white/50 backdrop-blur-md border-t border-gold-200/30 flex flex-wrap gap-4 text-xs text-honey-800">
+          <span><b className="text-honey-950">{report.workedDays}</b> dias trabalhados</span>
+          <span><b className="text-honey-950">{fromMin(report.totalWorked)}</b> horas</span>
+          <span>Saldo <b className={saldoPos ? 'text-emerald-600' : 'text-red-600'}>{(saldoPos ? '+' : '') + fromMin(report.totalBalance)}</b></span>
+          <span className="text-honey-600">Carga ref.: {fromMin(effectiveMin)}/dia</span>
         </div>
       </div>
 
-      {/* ── PDF page ────────────────────────────────────── */}
       <PrintPage
-        report={report} month={month} carga={carga} cargaMin={cargaMin}
-        empresa={empresa} extras={extras} debitos={debitos} saldoPos={saldoPos} isLast={isLast}
+        report={report}
+        month={month}
+        carga={carga}
+        effectiveMin={effectiveMin}
+        empresa={empresa}
+        extras={extras}
+        debitos={debitos}
+        saldoPos={saldoPos}
+        isLast={isLast}
+        observations={observations}
       />
     </>
   )
 }
 
-function StatPill({ label, value, variant = 'gray' }: { label: string; value: string; variant?: 'gray'|'green'|'red' }) {
-  const cls = variant === 'green' 
-    ? 'bg-emerald-100/80 text-emerald-700' 
-    : variant === 'red' 
-    ? 'bg-red-100/80 text-red-600' 
-    : 'bg-gold-100/80 text-honey-700'
+function StatPill({ label, value, variant = 'gray' }: {
+  label: string
+  value: string
+  variant?: 'gray' | 'green' | 'red'
+}) {
+  const cls =
+    variant === 'green' ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+      : variant === 'red' ? 'bg-red-50 text-red-700 border-red-200'
+        : 'bg-gold-50 text-honey-800 border-gold-200'
   return (
-    <div className={`rounded-xl px-3 py-1.5 text-right backdrop-blur-sm ${cls}`}>
-      <p className="text-[10px] font-medium opacity-70">{label}</p>
+    <div className={`rounded-xl px-3 py-1.5 text-right border ${cls}`}>
+      <p className="text-[10px] font-medium opacity-80">{label}</p>
       <p className="text-sm font-bold font-mono">{value}</p>
     </div>
   )
 }
 
-// ─── PDF ──────────────────────────────────────────────────────────────────────
-
 interface PrintPageProps {
-  report: EmployeeReport; month: string; carga: string; cargaMin: number
-  empresa: string; extras: number; debitos: number; saldoPos: boolean; isLast: boolean
+  report: EmployeeReport
+  month: string
+  carga: string
+  effectiveMin: number
+  empresa: string
+  extras: number
+  debitos: number
+  saldoPos: boolean
+  isLast: boolean
+  observations: string[]
 }
 
-function PrintPage({ report, month, carga, cargaMin, empresa, extras, debitos, saldoPos, isLast }: PrintPageProps) {
-  const col = (v: number) => v < 0 ? '#c0392b' : v > 0 ? '#16a34a' : '#8a6e1f'
+function PrintPage({ report, month, carga, effectiveMin, empresa, extras, debitos, saldoPos, isLast, observations }: PrintPageProps) {
+  const col = (v: number) => (v < 0 ? '#c0392b' : v > 0 ? '#16a34a' : '#8a6e1f')
   const half = Math.ceil(report.rows.length / 2)
   const leftRows = report.rows.slice(0, half)
   const rightRows = report.rows.slice(half)
@@ -131,67 +228,74 @@ function PrintPage({ report, month, carga, cargaMin, empresa, extras, debitos, s
     ? `Banco de horas em crédito de ${fromMin(extras)}.`
     : `Banco de horas em débito de ${fromMin(Math.abs(debitos))}.`
 
-  const atestadoDays = report.rows.filter(r => r.isAtestado).length
-  const holidayDays  = report.rows.filter(r => r.isHoliday).length
-  const generatedDays = report.rows.filter(r => r.generated && !r.isAtestado && !r.isHoliday).length
-
   type CSS = React.CSSProperties
   const s: Record<string, CSS> = {
-    page:    { fontFamily:"'Helvetica Neue',Arial,sans-serif", fontSize:'8.5pt', color:'#3a2d22', padding:'1.4cm 1.6cm', lineHeight:'1.5', pageBreakAfter: isLast ? 'auto' : 'always' },
-    topBar:  { display:'flex', justifyContent:'space-between', alignItems:'flex-end', borderBottom:'2px solid #5a4d38', paddingBottom:'7pt', marginBottom:'10pt' },
-    empBox:  { display:'flex', alignItems:'center', gap:'8pt', background:'#fffaf0', border:'1px solid #dccaa6', borderRadius:'5pt', padding:'7pt 10pt', marginBottom:'10pt' },
-    grid:    { display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8pt', marginBottom:'10pt' },
-    statBox: { textAlign:'center', background:'#fff', border:'1px solid #e8dcc4', borderRadius:'4pt', padding:'4pt 8pt', minWidth:'58pt' },
-    th:      { padding:'3.5pt 4pt', fontWeight:700, fontSize:'7pt', letterSpacing:'0.2px', textAlign:'center' as const },
-    td:      { padding:'2.5pt 4pt', textAlign:'center' as const, fontFamily:'monospace', borderBottom:'1px solid #fffde8' },
-    conclude:{ background:'#fffaf0', border:'1px solid #dccaa6', borderRadius:'4pt', padding:'7pt 10pt', fontSize:'8pt', lineHeight:'1.7', color:'#333' },
-    sig:     { width:'170pt', textAlign:'center' as const },
-    footer:  { marginTop:'10pt', borderTop:'1px solid #eee', paddingTop:'5pt', display:'flex', justifyContent:'space-between', fontSize:'6.5pt', color:'#bbb' },
+    page: { fontFamily: "'Helvetica Neue',Arial,sans-serif", fontSize: '8.5pt', color: '#3a2d22', padding: '1.4cm 1.6cm', lineHeight: '1.5', pageBreakAfter: isLast ? 'auto' : 'always' },
+    topBar: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderBottom: '2px solid #5a4d38', paddingBottom: '7pt', marginBottom: '10pt' },
+    empBox: { display: 'flex', alignItems: 'center', gap: '8pt', background: '#fffaf0', border: '1px solid #dccaa6', borderRadius: '5pt', padding: '7pt 10pt', marginBottom: '10pt' },
+    grid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8pt', marginBottom: '10pt' },
+    statBox: { textAlign: 'center', background: '#fff', border: '1px solid #e8dcc4', borderRadius: '4pt', padding: '4pt 8pt', minWidth: '58pt' },
+    th: { padding: '3.5pt 4pt', fontWeight: 700, fontSize: '7pt', letterSpacing: '0.2px', textAlign: 'center' as const },
+    td: { padding: '2.5pt 4pt', textAlign: 'center' as const, fontFamily: 'monospace', borderBottom: '1px solid #fffde8', fontSize: '7.5pt' },
+    conclude: { background: '#fffaf0', border: '1px solid #dccaa6', borderRadius: '4pt', padding: '7pt 10pt', fontSize: '8pt', lineHeight: '1.7', color: '#333' },
+    obsBox: { background: '#fffef8', border: '1px solid #e8dcc4', borderRadius: '4pt', padding: '6pt 10pt', marginBottom: '10pt', fontSize: '7.5pt', lineHeight: '1.6' },
+    sig: { width: '170pt', textAlign: 'center' as const },
+    footer: { marginTop: '10pt', borderTop: '1px solid #eee', paddingTop: '5pt', display: 'flex', justifyContent: 'space-between', fontSize: '6.5pt', color: '#bbb' },
+  }
+
+  function PrintRow({ row, stripe }: { row: DayRow; stripe: boolean }) {
+    const isOff = isWeekendOrHoliday(row)
+    const saldo = calcDayBalance(row, effectiveMin)
+    const bg = stripe ? '#faf9f3' : '#fff'
+
+    if (isFullDayAbsent(row)) {
+      return (
+        <tr style={{ background: bg }}>
+          <td style={{ ...s.td, textAlign: 'left', color: '#3a2d22' }}>{row.dayLabel}</td>
+          <td colSpan={6} style={{ ...s.td, fontWeight: 600, color: row.absence === 'justified' ? '#b8932d' : '#c0392b' }}>
+            {absenceLabel(row.absence!, row.absenceScope)}
+          </td>
+        </tr>
+      )
+    }
+
+    return (
+      <tr style={{ background: bg }}>
+        <td style={{ ...s.td, textAlign: 'left', fontWeight: 500, color: '#3a2d22' }}>
+          {row.dayLabel}
+          {row.absence && !isFullDayAbsent(row) && (
+            <div style={{ fontSize: '6pt', color: '#b8932d', fontFamily: 'sans-serif' }}>
+              {absenceLabel(row.absence, row.absenceScope)}
+            </div>
+          )}
+        </td>
+        {[row.ent1, row.sai1, row.ent2, row.sai2].map((t, ti) => (
+          <td key={ti} style={{ ...s.td, color: t ? '#3a2d22' : '#d4c5b0' }}>{isOff ? '—' : t || '—'}</td>
+        ))}
+        <td style={{ ...s.td, color: row.workedMin !== null ? '#3a2d22' : '#d4c5b0' }}>
+          {row.workedMin !== null ? fromMin(row.workedMin) : '—'}
+        </td>
+        <td style={{ ...s.td, fontWeight: 600, color: saldo !== null ? col(saldo) : '#d4c5b0' }}>
+          {saldo !== null ? (saldo > 0 ? '+' : '') + fromMin(saldo) : '—'}
+        </td>
+      </tr>
+    )
   }
 
   function MiniTable({ rows }: { rows: DayRow[] }) {
     return (
-      <table style={{ width:'100%', borderCollapse:'collapse', fontSize:'7.5pt' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
-          <tr style={{ background:'#5d4d38', color:'#fffef8' }}>
-            {['Dia','Ent 1','Saí 1','Ent 2','Saí 2','Total','Saldo'].map(h => (
-              <th key={h} style={{ ...s.th, textAlign: h==='Dia' ? 'left' : 'center' }}>{h}</th>
+          <tr style={{ background: '#5d4d38', color: '#fffef8' }}>
+            {['Dia', 'Ent 1', 'Saí 1', 'Ent 2', 'Saí 2', 'Total', 'Saldo'].map(h => (
+              <th key={h} style={{ ...s.th, textAlign: h === 'Dia' ? 'left' : 'center' }}>{h}</th>
             ))}
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, i) => {
-            const isWkd = row.weekday === 0 || row.weekday === 6
-            const isOff = isWkd || row.isHoliday || row.isAtestado
-            const saldo = row.workedMin !== null && !isOff ? row.workedMin - cargaMin : null
-            const bg = row.isAtestado ? '#fffbeb' : row.isHoliday ? '#fffef8' : isWkd ? '#fffef8' : i%2===0 ? '#fff' : '#faf9f3'
-            return (
-              <tr key={row.date} style={{ background: bg }}>
-                <td style={{ ...s.td, textAlign:'left', fontWeight: isWkd||isOff ? 400 : 500, color: isWkd ? '#b8956a' : '#3a2d22', whiteSpace:'nowrap' }}>
-                  {row.dayLabel}
-                  {row.isHoliday  && <span style={{ fontSize:'6pt', color:'#d4b960', marginLeft:'2pt' }}>feriado</span>}
-                  {row.generated && !isOff && <span style={{ color:'#d4b960', marginLeft:'2pt', fontSize:'6pt' }}>●</span>}
-                </td>
-                {row.absence !== null ? (
-                  <td colSpan={6} style={{ ...s.td, textAlign:'center', fontWeight:600, color: row.absence === 'justified' ? '#b8932d' : '#c0392b', letterSpacing:'0.3px' }}>
-                    {row.absence === 'justified' ? 'Falta Justificada' : 'Falta Injustificada'}
-                  </td>
-                ) : (
-                  <>
-                    {[row.ent1, row.sai1, row.ent2, row.sai2].map((t, ti) => (
-                      <td key={ti} style={{ ...s.td, color: t ? '#3a2d22' : '#d4c5b0' }}>{isOff ? '—' : t || '—'}</td>
-                    ))}
-                    <td style={{ ...s.td, color: row.workedMin !== null ? '#3a2d22' : '#d4c5b0' }}>
-                      {row.workedMin !== null ? fromMin(row.workedMin) : '—'}
-                    </td>
-                    <td style={{ ...s.td, fontWeight:600, color: saldo !== null ? col(saldo) : '#d4c5b0' }}>
-                      {saldo !== null ? (saldo > 0 ? '+' : '') + fromMin(saldo) : '—'}
-                    </td>
-                  </>
-                )}
-              </tr>
-            )
-          })}
+          {rows.map((row, i) => (
+            <PrintRow key={row.date} row={row} stripe={i % 2 === 1} />
+          ))}
         </tbody>
       </table>
     )
@@ -199,70 +303,67 @@ function PrintPage({ report, month, carga, cargaMin, empresa, extras, debitos, s
 
   return (
     <div className="hidden print:block" style={s.page}>
-      {/* Top bar */}
       <div style={s.topBar}>
         <div>
-          <div style={{ fontSize:'15pt', fontWeight:800, lineHeight:'1.1', letterSpacing:'-0.3px', color:'#5d4d38' }}>Espelho de Ponto</div>
-          <div style={{ fontSize:'8pt', color:'#8a7560', marginTop:'2pt' }}>{empresa || 'Relatório de Frequência'} · {monthLabel(month)}</div>
+          <div style={{ fontSize: '15pt', fontWeight: 800, color: '#5d4d38' }}>Espelho de Ponto</div>
+          <div style={{ fontSize: '8pt', color: '#8a7560', marginTop: '2pt' }}>
+            {empresa || 'Relatório de Frequência'} · {monthLabel(month)}
+            {report.specialMode ? ' · Recursos Especiais' : ''}
+          </div>
         </div>
-        <div style={{ textAlign:'right', fontSize:'7.5pt', color:'#a89968' }}>
+        <div style={{ textAlign: 'right', fontSize: '7.5pt', color: '#a89968' }}>
           <div>Emitido em {todayFmt()}</div>
-          <div>Jornada: {carga}h/dia</div>
+          <div>Jornada ref.: {carga} · efetiva {fromMin(effectiveMin)}/dia</div>
         </div>
       </div>
 
-      {/* Employee + stats */}
       <div style={s.empBox}>
-        <div style={{ flex:1 }}>
-          <div style={{ fontSize:'11pt', fontWeight:700, color:'#5d4d38' }}>{report.displayName}</div>
-          {report.key !== report.displayName && (
-            <div style={{ fontSize:'7.5pt', color:'#b8956a', fontFamily:'monospace', marginTop:'1pt' }}>{report.key}</div>
-          )}
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: '11pt', fontWeight: 700, color: '#5d4d38' }}>{report.displayName}</div>
         </div>
-        <div style={{ display:'flex', gap:'5pt' }}>
+        <div style={{ display: 'flex', gap: '5pt' }}>
           {[
-            { label:'Dias trab.', val:`${report.workedDays}`, c:'#3a2d22' },
-            { label:'Total horas', val:fromMin(report.totalWorked), c:'#3a2d22' },
-            { label:'Extras', val: extras > 0 ? `+${fromMin(extras)}` : '—', c: extras > 0 ? '#16a34a' : '#b8956a' },
-            { label:'Devidas', val: debitos < 0 ? fromMin(debitos) : '—', c: debitos < 0 ? '#c0392b' : '#b8956a' },
-            { label:'Saldo', val:(saldoPos?'+':'') + fromMin(report.totalBalance), c: col(report.totalBalance) },
+            { label: 'Dias trab.', val: `${report.workedDays}`, c: '#3a2d22' },
+            { label: 'Total horas', val: fromMin(report.totalWorked), c: '#3a2d22' },
+            { label: 'Saldo', val: (saldoPos ? '+' : '') + fromMin(report.totalBalance), c: col(report.totalBalance) },
           ].map(b => (
             <div key={b.label} style={s.statBox}>
-              <div style={{ fontSize:'6.5pt', color:'#8a7560', textTransform:'uppercase', letterSpacing:'0.3px' }}>{b.label}</div>
-              <div style={{ fontSize:'12pt', fontWeight:800, fontFamily:'monospace', color:b.c, lineHeight:'1.1', marginTop:'2pt' }}>{b.val}</div>
+              <div style={{ fontSize: '6.5pt', color: '#8a7560', textTransform: 'uppercase' }}>{b.label}</div>
+              <div style={{ fontSize: '12pt', fontWeight: 800, fontFamily: 'monospace', color: b.c }}>{b.val}</div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* Two-column table */}
       <div style={s.grid}>
         <MiniTable rows={leftRows} />
         <MiniTable rows={rightRows} />
       </div>
 
-      {/* Conclusion + signature */}
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 170pt', gap:'14pt', alignItems:'end' }}>
+      {observations.length > 0 && (
+        <div style={s.obsBox}>
+          <div style={{ fontWeight: 700, marginBottom: '4pt', color: '#5d4d38' }}>Observações</div>
+          {observations.map((line, i) => (
+            <div key={i} style={{ marginBottom: '3pt', color: '#444' }}>{line}</div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 170pt', gap: '14pt', alignItems: 'end', marginTop: '24pt' }}>
         <div style={s.conclude}>
-          Funcionário <strong>{report.displayName}</strong> · Competência: <strong>{monthLabel(month)}</strong> ·{' '}
-          <strong>{report.workedDays} dia{report.workedDays !== 1 ? 's' : ''} trabalhado{report.workedDays !== 1 ? 's' : ''}</strong> ·{' '}
-          Total: <strong>{fromMin(report.totalWorked)}h</strong> · {saldoTexto}
-          {atestadoDays > 0 && ` ${atestadoDays} dia${atestadoDays>1?'s':''} com atestado.`}
-          {holidayDays  > 0 && ` ${holidayDays} feriado${holidayDays>1?'s':''}.`}
-          {generatedDays > 0 && <span style={{ color:'#bbb', fontSize:'7pt' }}> — {generatedDays} registro{generatedDays>1?'s':''} com ● foram estimados automaticamente.</span>}
+          Funcionário <strong>{report.displayName}</strong> · {saldoTexto}
         </div>
         <div style={s.sig}>
-          <div style={{ borderTop:'1px solid #5d4d38', paddingTop:'4pt' }}>
-            <div style={{ fontSize:'8pt', fontWeight:600, color:'#3a2d22' }}>{report.displayName}</div>
-            <div style={{ fontSize:'7pt', color:'#b8956a', marginTop:'1pt' }}>Assinatura do Funcionário</div>
+          <div style={{ borderTop: '1px solid #5d4d38', paddingTop: '4pt', marginTop: '45pt' }}>
+            <div style={{ fontSize: '8pt', fontWeight: 600 }}>{report.displayName}</div>
+            <div style={{ fontSize: '7pt', color: '#b8956a', marginTop: '1pt' }}>Assinatura do Funcionário</div>
           </div>
         </div>
       </div>
 
-      {/* Footer */}
       <div style={s.footer}>
         <span>Gerado eletronicamente · {todayFmt()}</span>
-        <span>● = horário estimado · atestado = falta justificada · Conferir com AFD original</span>
+        <span>Conferir com AFD original</span>
       </div>
     </div>
   )
