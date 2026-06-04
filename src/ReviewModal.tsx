@@ -1,6 +1,29 @@
-import { useState, useRef, useEffect } from 'react'
-import { fromMin, toMin, recompute, randomNear, getEffectiveDailyMinutes } from './calc'
-import type { EmployeeReport, DayRow, Schedule, AbsenceType } from './calc'
+import { useState, useRef, useEffect, useMemo } from 'react'
+import {
+  fromMin,
+  recompute,
+  randomNear,
+  getEffectiveDailyMinutes,
+  calcDayBalance,
+  computeRowWorkedMin,
+  canEditPeriod,
+  isWeekendOrHoliday,
+  isFullDayAbsent,
+  absenceLabel,
+  appendAutoNote,
+  formatAutoNoteSpecial,
+  timesToIntervals,
+  intervalsToSlots,
+  classifyGapIssue,
+} from './calc'
+import type {
+  EmployeeReport,
+  DayRow,
+  Schedule,
+  AbsenceType,
+  AbsenceScope,
+  PunchInterval,
+} from './calc'
 
 interface Props {
   report: EmployeeReport
@@ -9,186 +32,472 @@ interface Props {
   onCancel: () => void
 }
 
-// ─── TimeCell ─────────────────────────────────────────────────────────────────
-
-function TimeCell({ value, onChange, generated }: {
-  value: string; onChange: (v: string) => void; generated: boolean
+function TimeCell({ value, onChange, generated, disabled }: {
+  value: string
+  onChange: (v: string) => void
+  generated: boolean
+  disabled?: boolean
 }) {
   return (
     <input
       type="time"
       value={value}
+      disabled={disabled}
       onChange={e => onChange(e.target.value)}
-      className={`w-[72px] text-center text-xs rounded-lg border px-1 py-1 font-mono
-        focus:outline-none focus:ring-2 transition-colors
+      className={`w-[76px] text-center text-xs rounded-lg border px-1 py-1 font-mono
+        focus:outline-none focus:ring-2 transition-colors disabled:opacity-40 disabled:cursor-not-allowed
         ${generated
-          ? 'border-red-300 bg-red-50 text-red-700 focus:ring-red-300/50'
+          ? 'border-amber-300 bg-amber-50 text-amber-900 focus:ring-amber-300/50'
           : 'border-gold-200 bg-white text-honey-950 hover:border-gold-400 focus:ring-gold-300/50'
         }`}
     />
   )
 }
 
-// ─── Absence badge ────────────────────────────────────────────────────────────
+function DayResolveDialog({ row, schedule, onClose, onApply }: {
+  row: DayRow
+  schedule: Schedule
+  onClose: () => void
+  onApply: (patch: Partial<DayRow>, autoLine?: string) => void
+}) {
+  const issueLabel =
+    row.gapIssue === 'empty' ? 'Nenhuma batida neste dia'
+      : row.gapIssue === 'partial' ? 'Batidas incompletas ou horários estimados'
+        : row.gapIssue === 'extra_punches' ? 'Mais de 4 batidas no dia'
+          : row.gapIssue === 'odd_punches' ? 'Número ímpar de batidas'
+            : 'Situação a resolver'
 
-function AbsenceBadge({ type }: { type: AbsenceType }) {
-  if (type === 'justified')
-    return <span className="ml-1.5 text-[9px] bg-gold-200 text-honey-800 rounded px-1 py-0.5">f. justificada</span>
-  if (type === 'unjustified')
-    return <span className="ml-1.5 text-[9px] bg-red-200 text-red-800 rounded px-1 py-0.5">f. injustificada</span>
-  return null
+  function applyAbsence(type: AbsenceType, scope: AbsenceScope) {
+    const label = absenceLabel(type, scope)
+    onApply({
+      absence: type,
+      absenceScope: scope,
+      isAtestado: true,
+      generated: false,
+      gapIssue: 'none',
+      ...(scope === 'full' || scope === null
+        ? { ent1: '', sai1: '', ent2: '', sai2: '' }
+        : scope === 'period1'
+          ? { ent1: '', sai1: '' }
+          : { ent2: '', sai2: '' }),
+    }, `${row.dayLabel}: ${label}.`)
+  }
+
+  const hasAbsence = row.absence !== null || row.isAtestado
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-honey-950/40 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="bg-white/90 backdrop-blur-2xl rounded-2xl shadow-2xl border border-gold-200/50 w-full max-w-md overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="px-5 py-4 border-b border-gold-200/40">
+          <h3 className="font-bold text-honey-950 text-base">{row.dayLabel}</h3>
+          <p className="text-xs text-honey-700/80 mt-1">{issueLabel}</p>
+        </div>
+        <div className="px-5 py-4 space-y-4">
+          <div>
+            <p className="text-[10px] font-bold text-honey-700/70 uppercase tracking-wider mb-2">Falta justificada</p>
+            <div className="flex flex-wrap gap-2">
+              <ActionChip label="Dia inteiro" onClick={() => applyAbsence('justified', 'full')} />
+              <ActionChip label="Só manhã" onClick={() => applyAbsence('justified', 'period1')} />
+              <ActionChip label="Só tarde" onClick={() => applyAbsence('justified', 'period2')} />
+            </div>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold text-honey-700/70 uppercase tracking-wider mb-2">Falta injustificada</p>
+            <div className="flex flex-wrap gap-2">
+              <ActionChip label="Dia inteiro" variant="red" onClick={() => applyAbsence('unjustified', 'full')} />
+              <ActionChip label="Só manhã" variant="red" onClick={() => applyAbsence('unjustified', 'period1')} />
+              <ActionChip label="Só tarde" variant="red" onClick={() => applyAbsence('unjustified', 'period2')} />
+            </div>
+          </div>
+          <div>
+            <p className="text-[10px] font-bold text-honey-700/70 uppercase tracking-wider mb-2">Ações de Horários</p>
+            <div className="flex flex-col gap-2">
+              <ActionChip
+                label="Preencher manualmente na tabela"
+                variant="neutral"
+                onClick={() => onApply({ generated: false, gapIssue: 'none' }, `${row.dayLabel}: horários informados manualmente.`)}
+              />
+              <ActionChip
+                label="Restaurar horários estimados (padrão)"
+                variant="neutral"
+                onClick={() => onApply({
+                  ent1: randomNear(schedule.workStart),
+                  sai1: randomNear(schedule.breakStart),
+                  ent2: randomNear(schedule.breakEnd),
+                  sai2: randomNear(schedule.workEnd),
+                  generated: true,
+                  gapIssue: 'partial',
+                  absence: null,
+                  absenceScope: null,
+                  isAtestado: false,
+                }, `${row.dayLabel}: horários estimados regenerados.`)}
+              />
+              {hasAbsence && (
+                <ActionChip
+                  label="Remover justificativas / Retornar ao normal"
+                  variant="neutral"
+                  onClick={() => onApply({
+                    absence: null,
+                    absenceScope: null,
+                    isAtestado: false,
+                    gapIssue: classifyGapIssue(
+                      [row.ent1, row.sai1, row.ent2, row.sai2].filter(Boolean),
+                      isWeekendOrHoliday(row),
+                      row.generated
+                    )
+                  }, `${row.dayLabel}: justificativa de falta removida.`)}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="px-5 py-3 border-t border-gold-200/40 flex justify-end bg-gold-50/20">
+          <button onClick={onClose} className="text-sm font-semibold text-honey-800 hover:text-honey-950 px-4 py-1.5 rounded-xl border border-gold-200 bg-white hover:bg-gold-50 transition-colors">Fechar</button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
-// ─── ReviewModal ──────────────────────────────────────────────────────────────
+function ActionChip({ label, onClick, variant = 'gold' }: {
+  label: string
+  onClick: () => void
+  variant?: 'gold' | 'red' | 'neutral'
+}) {
+  const cls =
+    variant === 'red'
+      ? 'border-red-200 text-red-800 hover:bg-red-50/60 hover:border-red-300'
+      : variant === 'neutral'
+        ? 'border-gold-300 text-honey-800 hover:bg-gold-50'
+        : 'border-gold-300 text-honey-800 hover:bg-gold-50'
+  return (
+    <button type="button" onClick={onClick}
+      className={`text-xs px-3 py-1.5 rounded-lg border font-semibold transition-colors bg-white/70 ${cls}`}>
+      {label}
+    </button>
+  )
+}
+
+function SpecialEditor({ rows, setRows, setAutoNotes, onClose }: {
+  rows: DayRow[]
+  setRows: React.Dispatch<React.SetStateAction<DayRow[]>>
+  setAutoNotes: React.Dispatch<React.SetStateAction<string[]>>
+  onClose: () => void
+}) {
+  const specialDays = rows
+    .map((r, i) => ({ r, i }))
+    .filter(({ r }) => !isWeekendOrHoliday(r) && (r.intervals.length > 1 || r.extraPunches.length > 0 || r.gapIssue === 'extra_punches'))
+
+  function updateInterval(dayIdx: number, intIdx: number, field: keyof PunchInterval, value: string) {
+    setRows(prev => {
+      const next = [...prev]
+      const row = { ...next[dayIdx] }
+      const intervals = row.intervals.map((iv, j) =>
+        j === intIdx ? { ...iv, [field]: value } : iv,
+      )
+      row.intervals = intervals
+      const slots = intervalsToSlots(intervals)
+      row.ent1 = slots.ent1
+      row.sai1 = slots.sai1
+      row.ent2 = slots.ent2
+      row.sai2 = slots.sai2
+      row.workedMin = computeRowWorkedMin(row, true)
+      row.gapIssue = 'none'
+      next[dayIdx] = row
+      return next
+    })
+  }
+
+  function addInterval(dayIdx: number) {
+    setRows(prev => {
+      const next = [...prev]
+      const row = { ...next[dayIdx], intervals: [...next[dayIdx].intervals, { entrada: '', saida: '' }] }
+      next[dayIdx] = row
+      return next
+    })
+  }
+
+  function confirmAndRegister() {
+    setAutoNotes(prev => {
+      for (const { r } of specialDays) {
+        const wm = computeRowWorkedMin(r, true) ?? 0
+        const line = formatAutoNoteSpecial(r.dayLabel, r.intervals, wm)
+        prev = appendAutoNote(prev, line)
+      }
+      return prev
+    })
+    onClose()
+  }
+
+  return (
+    <div className="fixed inset-0 z-[55] flex items-center justify-center p-3 bg-honey-950/45 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-2xl border border-gold-200/80 w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="px-5 py-4 border-b border-gold-100 flex-shrink-0">
+          <h3 className="font-bold text-honey-950 text-base">Recursos Especiais</h3>
+          <p className="text-xs text-honey-700 mt-0.5">
+            Edite todos os intervalos de entrada e saída. O total do dia é a soma dos períodos válidos.
+          </p>
+        </div>
+        <div className="overflow-y-auto flex-1 px-5 py-4 space-y-5">
+          {specialDays.length === 0 ? (
+            <p className="text-sm text-honey-600">Nenhum dia com múltiplas batidas detectado. Adicione intervalos pelo dia na tabela principal.</p>
+          ) : (
+            specialDays.map(({ r, i }) => (
+              <div key={r.date} className="rounded-xl border border-gold-200/60 bg-gold-50/30 p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-semibold text-sm text-honey-900">{r.dayLabel}</span>
+                  <span className="text-xs font-mono text-honey-700">
+                    Total: {fromMin(computeRowWorkedMin(r, true) ?? 0)}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {r.intervals.map((iv, j) => (
+                    <div key={j} className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] text-honey-600 w-6">{j + 1}.</span>
+                      <TimeCell value={iv.entrada} generated={false}
+                        onChange={v => updateInterval(i, j, 'entrada', v)} />
+                      <span className="text-honey-500 text-xs">até</span>
+                      <TimeCell value={iv.saida} generated={false}
+                        onChange={v => updateInterval(i, j, 'saida', v)} />
+                    </div>
+                  ))}
+                </div>
+                <button type="button" onClick={() => addInterval(i)}
+                  className="text-[11px] text-honey-700 hover:text-honey-950 border border-gold-200 rounded-lg px-2 py-1 mt-2">
+                  + intervalo
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+        <div className="px-5 py-3 border-t border-gold-100 flex justify-end gap-2 flex-shrink-0">
+          <button onClick={onClose}
+            className="px-4 py-2 rounded-xl text-sm font-medium border border-gold-200 text-honey-700 hover:bg-gold-50">
+            Cancelar
+          </button>
+          <button onClick={confirmAndRegister}
+            className="px-4 py-2 rounded-xl text-sm font-semibold bg-honey-800 text-white hover:bg-honey-900">
+            Confirmar Recursos
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AbsenceBadge({ row }: { row: DayRow }) {
+  if (row.absence === null) return null
+  const label = absenceLabel(row.absence, row.absenceScope)
+  const cls = row.absence === 'justified'
+    ? 'bg-amber-100 text-amber-900 border-amber-200'
+    : 'bg-red-100 text-red-800 border-red-200'
+  return (
+    <span className={`ml-1.5 text-[9px] rounded-md px-1.5 py-0.5 border font-medium ${cls}`}>
+      {label}
+    </span>
+  )
+}
 
 export function ReviewModal({ report: initialReport, dailyMinutes, onConfirm, onCancel }: Props) {
   const [rows, setRows] = useState<DayRow[]>(initialReport.rows)
   const [schedule, setSchedule] = useState<Schedule>(initialReport.schedule)
+  const [specialMode, setSpecialMode] = useState(initialReport.specialMode)
+  const [notes, setNotes] = useState(initialReport.notes)
+  const [autoNotes, setAutoNotes] = useState<string[]>(initialReport.autoNotes)
+  const [resolveIdx, setResolveIdx] = useState<number | null>(null)
+  const [showSpecial, setShowSpecial] = useState(false)
   const tableRef = useRef<HTMLDivElement>(null)
 
-  // Reset scroll to top on every mount (new employee)
   useEffect(() => {
     tableRef.current?.scrollTo({ top: 0 })
   }, [])
 
+  const effectiveDailyMinutes = getEffectiveDailyMinutes(schedule, dailyMinutes)
+
   const pendingCount = rows.filter(
-    r => r.generated && r.absence === null && !r.isHoliday && r.weekday !== 0 && r.weekday !== 6
+    r => (r.generated || r.gapIssue !== 'none') && r.absence === null && !isWeekendOrHoliday(r),
   ).length
 
-  // ── update a single row, optionally clearing the generated flag
+  const gapCount = rows.filter(r => r.gapIssue !== 'none' && r.absence === null && !isWeekendOrHoliday(r)).length
+
+  function syncRowWorked(row: DayRow): DayRow {
+    if (isWeekendOrHoliday(row) || isFullDayAbsent(row)) {
+      return { ...row, workedMin: null }
+    }
+    return { ...row, workedMin: computeRowWorkedMin(row, specialMode) }
+  }
+
+  function enableSpecialMode() {
+    setSpecialMode(true)
+    setRows(prev => prev.map(r => {
+      if (isWeekendOrHoliday(r)) return r
+      const allTimes = [r.ent1, r.sai1, r.ent2, r.sai2, ...r.extraPunches].filter(Boolean)
+      const intervals = allTimes.length > 0 ? timesToIntervals(allTimes) : r.intervals
+      const slots = intervalsToSlots(intervals)
+      return syncRowWorked({
+        ...r,
+        intervals,
+        ent1: slots.ent1,
+        sai1: slots.sai1,
+        ent2: slots.ent2,
+        sai2: slots.sai2,
+        gapIssue: 'none',
+      })
+    }))
+    setAutoNotes(prev => appendAutoNote(prev, 'Recursos Especiais ativado para este funcionário.'))
+  }
+
+  // Auto-detect and enable special mode if there are multiple punches on any day
+  useEffect(() => {
+    if (!specialMode) {
+      const hasMultiplePunches = rows.some(
+        r => !isWeekendOrHoliday(r) && (r.intervals.length > 1 || r.gapIssue === 'extra_punches')
+      )
+      if (hasMultiplePunches) {
+        enableSpecialMode()
+      }
+    }
+  }, [])
+
   function updateRow(i: number, patch: Partial<DayRow>, clearGenerated = false) {
     setRows(prev => {
       const next = [...prev]
-      const updated: DayRow = { ...next[i], ...patch }
+      let updated: DayRow = { ...next[i], ...patch }
       if (clearGenerated) updated.generated = false
-
-      const isOff = updated.weekday === 0 || updated.weekday === 6
-        || updated.isHoliday || updated.absence !== null
-      if (!isOff) {
-        const a = toMin(updated.ent1), b = toMin(updated.sai1)
-        const c = toMin(updated.ent2), d = toMin(updated.sai2)
-        let t = 0, has = false
-        if (a !== null && b !== null && b > a) { t += b - a; has = true }
-        if (c !== null && d !== null && d > c) { t += d - c; has = true }
-        updated.workedMin = has ? t : null
-      } else {
-        updated.workedMin = null
+      const timeTouched =
+        patch.ent1 !== undefined || patch.sai1 !== undefined ||
+        patch.ent2 !== undefined || patch.sai2 !== undefined
+      if (timeTouched) {
+        const allTimes = [updated.ent1, updated.sai1, updated.ent2, updated.sai2, ...updated.extraPunches].filter(Boolean)
+        if (specialMode) updated.intervals = timesToIntervals(allTimes)
+        updated.gapIssue = classifyGapIssue(allTimes, isWeekendOrHoliday(updated), updated.generated)
       }
+      updated = syncRowWorked(updated)
       next[i] = updated
       return next
     })
   }
 
-  // Toggle absence type — clicking the same type again removes it
-  function setAbsence(i: number, type: AbsenceType) {
-    const current = rows[i].absence
-    const next: AbsenceType = current === type ? null : type
-    updateRow(i, {
-      absence: next,
-      isAtestado: next !== null,
-      ent1: next !== null ? '' : rows[i].ent1,
-      sai1: next !== null ? '' : rows[i].sai1,
-      ent2: next !== null ? '' : rows[i].ent2,
-      sai2: next !== null ? '' : rows[i].sai2,
-      generated: false,
-    })
+  function applyResolve(i: number, patch: Partial<DayRow>, autoLine?: string) {
+    updateRow(i, patch)
+    if (autoLine) setAutoNotes(prev => appendAutoNote(prev, autoLine))
+    setResolveIdx(null)
   }
 
-  function regenerateRow(i: number) {
-    updateRow(i, {
-      ent1: randomNear(schedule.workStart),
-      sai1: randomNear(schedule.breakStart),
-      ent2: randomNear(schedule.breakEnd),
-      sai2: randomNear(schedule.workEnd),
-      generated: true,
-    })
-  }
+
 
   function handleConfirm() {
-    // Calcula a carga diária efetiva baseada no schedule configurado
-    const effectiveDailyMinutes = getEffectiveDailyMinutes(schedule, dailyMinutes)
-    onConfirm(recompute({ ...initialReport, rows, schedule }, effectiveDailyMinutes))
+    const payload: EmployeeReport = {
+      ...initialReport,
+      rows,
+      schedule,
+      specialMode,
+      notes: notes.trim(),
+      autoNotes,
+    }
+    onConfirm(recompute(payload, dailyMinutes))
   }
 
-  // Calcula a carga diária efetiva para exibição em tempo real
-  const effectiveDailyMinutes = getEffectiveDailyMinutes(schedule, dailyMinutes)
-
-  const totalWorked  = rows.reduce((a, r) => a + (r.workedMin ?? 0), 0)
-  const totalBalance = rows.reduce((a, r) => {
-    const off = r.weekday === 0 || r.weekday === 6 || r.isHoliday || r.absence !== null
-    return a + (r.workedMin !== null && !off ? r.workedMin - effectiveDailyMinutes : 0)
-  }, 0)
+  const totals = useMemo(() => {
+    let worked = 0
+    let balance = 0
+    for (const row of rows) {
+      if (isWeekendOrHoliday(row)) continue
+      const bal = calcDayBalance(row, effectiveDailyMinutes)
+      if (row.workedMin !== null && row.workedMin > 0) {
+        if (row.absence === null || (row.absence === 'justified' && !isFullDayAbsent(row))) {
+          worked += row.workedMin
+        }
+      }
+      if (bal !== null) {
+        if (row.absence === null) balance += bal
+        else if (row.absence === 'justified' && !isFullDayAbsent(row)) balance += bal
+        else if (row.absence === 'unjustified') balance += bal
+      }
+    }
+    return { worked, balance }
+  }, [rows, effectiveDailyMinutes])
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-honey-950/40 backdrop-blur-md">
-      <div className="bg-white/90 backdrop-blur-2xl rounded-2xl shadow-2xl border border-gold-200/60 w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-honey-950/40 backdrop-blur-md">
+      <div className="bg-white/80 backdrop-blur-2xl rounded-2xl shadow-2xl border border-gold-200/45 w-full max-w-5xl max-h-[96vh] flex flex-col overflow-hidden">
 
-        {/* ── Header ──────────────────────────────────────────────────── */}
-        <div className="px-5 py-4 border-b border-gold-200/40 flex items-start justify-between flex-shrink-0">
-          <div>
-            <h2 className="font-bold text-honey-900 text-base">{initialReport.displayName}</h2>
-            <p className="text-xs text-honey-700 mt-0.5">Revise e edite os registros antes de confirmar</p>
+        {/* Header */}
+        <div className="px-4 sm:px-5 py-3.5 border-b border-gold-200/40 flex items-start justify-between gap-3 flex-shrink-0 bg-white/40 backdrop-blur-sm">
+          <div className="min-w-0">
+            <h2 className="font-bold text-honey-950 text-base sm:text-lg truncate">{initialReport.displayName}</h2>
+            <p className="text-xs text-honey-700 mt-0.5">Revise os registros · {effectiveDailyMinutes < dailyMinutes ? 'meio período' : 'integral'} · {fromMin(effectiveDailyMinutes)}/dia</p>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 flex-shrink-0">
             {pendingCount > 0 && (
-              <div className="flex items-center gap-1.5 bg-red-100/90 backdrop-blur-sm border border-red-300/60 rounded-xl px-3 py-1.5">
-                <span className="w-2 h-2 rounded-full bg-red-500 flex-shrink-0 animate-pulse" />
-                <span className="text-xs font-semibold text-red-800">
-                  {pendingCount} estimado{pendingCount !== 1 ? 's' : ''} — verifique
-                </span>
-              </div>
+              <span className="hidden sm:flex items-center gap-1 bg-amber-100 border border-amber-300/60 rounded-lg px-2.5 py-1 text-[11px] font-semibold text-amber-900">
+                {pendingCount} pendente{pendingCount !== 1 ? 's' : ''}
+              </span>
             )}
-            <button onClick={onCancel}
-              className="text-honey-700/50 hover:text-honey-900 w-8 h-8 rounded-lg hover:bg-gold-100/60 flex items-center justify-center text-xl transition-colors">
-              ×
-            </button>
+            <button onClick={onCancel} aria-label="Fechar"
+              className="text-honey-600 hover:text-honey-950 w-8 h-8 rounded-lg hover:bg-gold-100 flex items-center justify-center text-xl">×</button>
           </div>
         </div>
 
-        {/* ── Schedule config ──────────────────────────────────────────── */}
-        <div className="px-5 py-3 bg-white/50 backdrop-blur-sm border-b border-gold-200/40 flex-shrink-0">
-          <div className="flex items-center justify-between gap-4 mb-2">
-            <div>
-              <p className="text-[10px] font-bold text-honey-800 uppercase tracking-widest">
-                Horário padrão — usado na regeneração automática
-              </p>
-            </div>
-            <div className="text-xs font-semibold text-honey-800 bg-gold-100/80 px-3 py-1 rounded-lg">
-              {getEffectiveDailyMinutes(schedule, dailyMinutes) < dailyMinutes ? '⏱️ Meio período' : '🕐 Período integral'} · {fromMin(effectiveDailyMinutes)}/dia
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-4 items-center">
+        {/* Toolbar */}
+        <div className="px-4 sm:px-5 py-2.5 border-b border-gold-200/35 bg-gold-50/20 backdrop-blur-sm flex flex-wrap items-center gap-2 flex-shrink-0">
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={specialMode}
+              onChange={e => { if (e.target.checked) enableSpecialMode(); else setSpecialMode(false) }}
+              className="rounded border-gold-300 text-honey-800 focus:ring-gold-400"
+            />
+            <span className="text-xs font-semibold text-honey-900">Recursos Especiais</span>
+          </label>
+          {specialMode && (
+            <button type="button" onClick={() => setShowSpecial(true)}
+              className="text-xs font-medium px-3 py-1 rounded-lg bg-honey-800 text-white hover:bg-honey-900">
+              Editar intervalos
+            </button>
+          )}
+          {gapCount > 0 && (
+            <span className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
+              {gapCount} dia{gapCount !== 1 ? 's' : ''} com lacuna — use <b>Resolver</b>
+            </span>
+          )}
+        </div>
+
+        {/* Schedule */}
+        <div className="px-4 sm:px-5 py-2.5 border-b border-gold-200/20 flex-shrink-0 bg-white/30 backdrop-blur-sm">
+          <p className="text-[10px] font-bold text-honey-700/80 uppercase tracking-widest mb-2">Horário padrão (regeneração)</p>
+          <div className="flex flex-wrap gap-3 sm:gap-4">
             {([
               ['Entrada', 'workStart'],
-              ['Saída p/ almoço', 'breakStart'],
-              ['Volta do almoço', 'breakEnd'],
+              ['Almoço saída', 'breakStart'],
+              ['Almoço volta', 'breakEnd'],
               ['Saída', 'workEnd'],
             ] as [string, keyof Schedule][]).map(([label, field]) => (
               <div key={field} className="flex items-center gap-1.5">
-                <label className="text-xs text-honey-700 font-medium whitespace-nowrap">{label}</label>
+                <label className="text-[11px] text-honey-700 font-medium whitespace-nowrap">{label}</label>
                 <input type="time" value={schedule[field]}
                   onChange={e => setSchedule(s => ({ ...s, [field]: e.target.value }))}
-                  className="border border-gold-200/60 rounded-lg px-2 py-1 text-xs font-mono bg-white/70 backdrop-blur-sm focus:outline-none focus:ring-2 focus:ring-gold-300/50 hover:border-gold-300 transition-all text-honey-950" />
+                  className="border border-gold-200 rounded-lg px-2 py-1 text-xs font-mono w-[88px] focus:outline-none focus:ring-2 focus:ring-gold-300/50 bg-white/80" />
               </div>
             ))}
           </div>
         </div>
 
-        {/* ── Legend ───────────────────────────────────────────────────── */}
-        <div className="px-5 py-2 border-b border-gold-200/40 flex flex-wrap items-center gap-4 text-[11px] text-honey-700 flex-shrink-0 bg-white/30">
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded border border-red-300 bg-red-50 flex-shrink-0" />Campo estimado — edite ou ↺ regenera</span>
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded border border-gold-300 bg-gold-100 flex-shrink-0" />Falta justificada</span>
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded border border-red-300 bg-red-100 flex-shrink-0" />Falta injustificada</span>
-          <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded border border-gold-300 bg-gold-50 flex-shrink-0" />Feriado / folga</span>
-        </div>
-
-        {/* ── Table ────────────────────────────────────────────────────── */}
-        <div ref={tableRef} className="overflow-y-auto flex-1 bg-white/40">
-          <table className="w-full text-xs border-collapse">
-            <thead className="sticky top-0 z-10 bg-white/90 backdrop-blur-lg shadow-sm">
-              <tr className="border-b border-gold-200/40">
-                {['Dia','Entrada 1','Saída 1','Entrada 2','Saída 2','Total','Saldo','Ações'].map((h, hi) => (
-                  <th key={hi} className="px-2 py-2.5 text-[10px] font-bold text-honey-700 uppercase tracking-wide text-center first:text-left first:pl-4">
+        {/* Table */}
+        <div ref={tableRef} className="overflow-auto flex-1 min-h-0 bg-white/30">
+          <table className="w-full text-xs border-collapse min-w-[720px]">
+            <thead className="sticky top-0 z-10 bg-white/95 backdrop-blur-md shadow-sm">
+              <tr className="border-b border-gold-200">
+                {['Dia', 'Ent 1', 'Saí 1', 'Ent 2', 'Saí 2', 'Total', 'Saldo', ''].map((h, hi) => (
+                  <th key={hi}
+                    className={`px-2 py-2.5 text-[10px] font-bold text-honey-700 uppercase tracking-wide
+                      ${hi === 0 ? 'text-left pl-4 min-w-[100px]' : hi === 7 ? 'w-[1%] text-right pr-4' : 'text-center'}`}>
                     {h}
                   </th>
                 ))}
@@ -196,103 +505,86 @@ export function ReviewModal({ report: initialReport, dailyMinutes, onConfirm, on
             </thead>
             <tbody>
               {rows.map((row, i) => {
-                const isWkd   = row.weekday === 0 || row.weekday === 6
-                const isOff   = isWkd || row.isHoliday
-                const isAbsent = row.absence !== null
-                const showInputs = !isOff && !isAbsent
-                const saldo = row.workedMin !== null && !isOff && !isAbsent
-                  ? row.workedMin - effectiveDailyMinutes : null
+                const isOff = isWeekendOrHoliday(row)
+                const fullAbsent = isFullDayAbsent(row)
+                const saldo = calcDayBalance(row, effectiveDailyMinutes)
+                const needsResolve = row.gapIssue !== 'none' && row.absence === null && !isOff
 
                 let rowBg = 'bg-white/70'
-                if      (row.absence === 'justified')   rowBg = 'bg-gold-50/80'
-                else if (row.absence === 'unjustified') rowBg = 'bg-red-50/60'
-                else if (row.isHoliday)  rowBg = 'bg-gold-50/70'
-                else if (isWkd)          rowBg = 'bg-gold-50/50'
-                else if (row.generated)  rowBg = 'bg-red-50/40'
+                if (row.absence === 'justified') rowBg = 'bg-amber-50/70'
+                else if (row.absence === 'unjustified') rowBg = 'bg-red-50/50'
+                else if (row.isHoliday) rowBg = 'bg-gold-50/60'
+                else if (row.weekday === 0 || row.weekday === 6) rowBg = 'bg-gold-50/30'
+                else if (needsResolve) rowBg = 'bg-amber-50/40'
+                else if (row.generated) rowBg = 'bg-amber-50/20'
+
+                const periodFields = [
+                  ['ent1', 'sai1'] as const,
+                  ['ent2', 'sai2'] as const,
+                ]
 
                 return (
-                  <tr key={row.date} className={`${rowBg} border-b border-gold-200/30 last:border-0`}>
-
-                    {/* Day label */}
-                    <td className="pl-4 pr-2 py-1.5 font-medium whitespace-nowrap">
-                      <span className={isOff ? 'text-honey-600/50' : row.generated ? 'text-red-700' : 'text-honey-900'}>
-                        {row.dayLabel}
-                      </span>
-                      {row.isHoliday && (
-                        <span className="ml-1.5 text-[9px] bg-gold-200 text-honey-700 rounded px-1 py-0.5">feriado</span>
-                      )}
-                      <AbsenceBadge type={row.absence} />
-                      {row.generated && !isOff && !isAbsent && (
-                        <span className="ml-1.5 text-[9px] text-red-500 font-semibold">●estimado</span>
-                      )}
-                    </td>
-
-                    {/* Time inputs — always editable when not off/absent */}
-                    {(['ent1','sai1','ent2','sai2'] as const).map(field => (
-                      <td key={field} className="px-1 py-1 text-center">
-                        {showInputs ? (
-                          <TimeCell
-                            value={row[field]}
-                            onChange={v => updateRow(i, { [field]: v }, true)}
-                            generated={row.generated && !row[field]}
-                          />
-                        ) : (
-                          <span className="text-honey-600/40 font-mono">—</span>
+                  <tr key={row.date} className={`${rowBg} border-b border-gold-100/60 hover:bg-gold-50/20 transition-colors`}>
+                    <td className="pl-4 pr-1 py-2 align-middle">
+                      <div className="font-semibold text-honey-900 whitespace-nowrap">{row.dayLabel}</div>
+                      <div className="flex flex-wrap items-center gap-0.5 mt-0.5">
+                        {row.isHoliday && <Tag text="feriado" />}
+                        <AbsenceBadge row={row} />
+                        {row.generated && !fullAbsent && !isOff && <Tag text="estimado" warn />}
+                        {specialMode && row.intervals.length > 2 && (
+                          <Tag text={`${row.intervals.length} int.`} />
                         )}
-                      </td>
-                    ))}
-
-                    {/* Total */}
-                    <td className="px-2 py-1.5 text-center font-mono text-honey-800">
-                      {row.workedMin !== null
-                        ? fromMin(row.workedMin)
-                        : <span className="text-gold-200">—</span>}
+                      </div>
                     </td>
 
-                    {/* Saldo */}
-                    <td className={`px-2 py-1.5 text-center font-mono font-semibold
-                      ${saldo === null ? 'text-gold-200' : saldo < 0 ? 'text-red-500' : saldo > 0 ? 'text-emerald-600' : 'text-honey-600'}`}>
+                    {periodFields.flatMap((pair, pi) =>
+                      pair.map(field => {
+                        const period = pi === 0 ? 1 : 2
+                        const editable = !isOff && !fullAbsent && canEditPeriod(row, period as 1 | 2)
+                        return (
+                          <td key={field} className="px-1 py-1.5 text-center align-middle">
+                            {editable ? (
+                              <TimeCell
+                                value={row[field]}
+                                generated={row.generated && !row[field]}
+                                onChange={v => updateRow(i, { [field]: v }, true)}
+                              />
+                            ) : (
+                              <span className="text-honey-400/60 font-mono">—</span>
+                            )}
+                          </td>
+                        )
+                      }),
+                    )}
+
+                    <td className="px-2 py-1.5 text-center font-mono font-medium text-honey-800 align-middle">
+                      {specialMode && !isOff && !fullAbsent && row.intervals.length > 0 ? (
+                        <span title={row.intervals.map(iv => `${iv.entrada}-${iv.saida}`).join(', ')}>
+                          {row.workedMin !== null ? fromMin(row.workedMin) : '—'}
+                        </span>
+                      ) : row.workedMin !== null ? fromMin(row.workedMin) : <span className="text-gold-300">—</span>}
+                    </td>
+
+                    <td className={`px-2 py-1.5 text-center font-mono font-semibold align-middle
+                      ${saldo === null ? 'text-gold-300' : saldo < 0 ? 'text-red-600' : saldo > 0 ? 'text-emerald-600' : 'text-honey-600'}`}>
                       {saldo !== null ? (saldo > 0 ? '+' : '') + fromMin(saldo) : '—'}
                     </td>
 
-                    {/* Actions */}
-                    <td className="px-2 py-1.5">
-                      {!isWkd && !row.isHoliday && (
-                        <div className="flex items-center justify-center gap-1 flex-wrap">
-
-                          {/* Falta Justificada */}
-                          <button
-                            onClick={() => setAbsence(i, 'justified')}
-                            className={`text-[10px] px-1.5 py-0.5 rounded-md border font-medium transition-colors whitespace-nowrap
-                              ${row.absence === 'justified'
-                                ? 'bg-gold-200 border-gold-400 text-honey-900'
-                                : 'bg-white/80 border-gold-200/60 text-honey-700 hover:bg-gold-50 hover:border-gold-400 hover:text-honey-800'
-                              }`}
-                          >
-                            {row.absence === 'justified' ? '✕ Justif.' : 'F. Justificada'}
-                          </button>
-
-                          {/* Falta Injustificada */}
-                          <button
-                            onClick={() => setAbsence(i, 'unjustified')}
-                            className={`text-[10px] px-1.5 py-0.5 rounded-md border font-medium transition-colors whitespace-nowrap
-                              ${row.absence === 'unjustified'
-                                ? 'bg-red-200 border-red-400 text-red-900'
-                                : 'bg-white/80 border-gold-200/60 text-honey-700 hover:bg-red-50 hover:border-red-300 hover:text-red-700'
-                              }`}
-                          >
-                            {row.absence === 'unjustified' ? '✕ Injustif.' : 'F. Injustificada'}
-                          </button>
-
-                          {/* Regenerate — only when no absence */}
-                          {row.absence === null && (
-                            <button
-                              onClick={() => regenerateRow(i)}
-                              title="Regenerar horários"
-                              className="text-[10px] w-6 h-6 rounded-md border border-gold-200/60 bg-white/80 text-honey-700 hover:bg-gold-50 hover:border-gold-400 hover:text-honey-800 transition-colors flex items-center justify-center"
-                            >↺</button>
-                          )}
-                        </div>
+                    <td className="px-3 py-1.5 align-middle text-right pr-4">
+                      {!isOff && (
+                        <button
+                          type="button"
+                          onClick={() => setResolveIdx(i)}
+                          className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-all ${
+                            needsResolve
+                              ? 'bg-amber-500 border-amber-600 text-white shadow-md hover:bg-amber-600'
+                              : row.absence
+                                ? 'bg-gold-50 border-gold-300 text-honey-900 hover:bg-gold-100'
+                                : 'bg-white border-gold-200 text-honey-700 hover:border-gold-300 hover:bg-gold-50'
+                          }`}
+                        >
+                          {needsResolve ? 'Resolver' : 'Ajustar'}
+                        </button>
                       )}
                     </td>
                   </tr>
@@ -302,34 +594,75 @@ export function ReviewModal({ report: initialReport, dailyMinutes, onConfirm, on
           </table>
         </div>
 
-        {/* ── Footer ───────────────────────────────────────────────────── */}
-        <div className="px-5 py-3 border-t border-gold-200/40 flex items-center gap-5 flex-shrink-0 bg-white/80 backdrop-blur-lg">
-          <div className="flex items-center gap-3 text-xs">
-            <span className="text-honey-800">Total: <b className="text-honey-950 font-mono">{fromMin(totalWorked)}</b></span>
-            <span className="text-gold-400">|</span>
-            <span className="text-honey-800">Saldo: <b className={`font-mono ${totalBalance >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
-              {(totalBalance >= 0 ? '+' : '') + fromMin(totalBalance)}
+        {/* Notes */}
+        <div className="px-4 sm:px-5 py-3 border-t border-gold-200/30 flex-shrink-0 bg-gold-50/10 backdrop-blur-sm">
+          <label className="block text-[10px] font-bold text-honey-700/80 uppercase tracking-widest mb-1.5">
+            Observações (incluídas no relatório)
+          </label>
+          <textarea
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            rows={2}
+            placeholder="Anotações gerais sobre este funcionário no mês…"
+            className="w-full text-sm border border-gold-200 rounded-xl px-3 py-2 resize-y min-h-[52px] focus:outline-none focus:ring-2 focus:ring-gold-300/50 text-honey-950 placeholder:text-honey-500/60 bg-white/80"
+          />
+          {autoNotes.length > 0 && (
+            <div className="mt-2 text-[11px] text-honey-700 space-y-0.5 max-h-20 overflow-y-auto">
+              <p className="font-semibold text-honey-800">Registro automático:</p>
+              {autoNotes.map((n, idx) => (
+                <p key={idx} className="text-honey-600 pl-2 border-l-2 border-gold-300">{n}</p>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-4 sm:px-5 py-3 border-t border-gold-200/30 flex flex-wrap items-center gap-3 flex-shrink-0 bg-white/50 backdrop-blur-md">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-honey-800">
+            <span>Total: <b className="font-mono text-honey-950">{fromMin(totals.worked)}</b></span>
+            <span>Saldo: <b className={`font-mono ${totals.balance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+              {(totals.balance >= 0 ? '+' : '') + fromMin(totals.balance)}
             </b></span>
-            {pendingCount > 0 && (
-              <>
-                <span className="text-gold-300">|</span>
-                <span className="text-red-600 font-medium">{pendingCount} estimado{pendingCount !== 1 ? 's' : ''} sem revisão</span>
-              </>
-            )}
           </div>
           <div className="ml-auto flex gap-2">
             <button onClick={onCancel}
-              className="px-4 py-2 rounded-xl text-sm font-medium border border-gold-200/60 bg-white/70 text-honey-800 hover:bg-gold-50/80 transition-colors backdrop-blur-sm">
+              className="px-4 py-2 rounded-xl text-sm font-semibold border border-gold-200 text-honey-800 hover:bg-gold-50/50 bg-white/55">
               Cancelar
             </button>
             <button onClick={handleConfirm}
-              className="px-5 py-2 rounded-xl text-sm font-bold bg-honey-800 hover:bg-honey-900 text-white transition-colors shadow-lg shadow-gold-200">
+              className="px-5 py-2 rounded-xl text-sm font-bold bg-honey-800 hover:bg-honey-900 text-white shadow-md transition-all">
               {pendingCount > 0 ? 'Confirmar mesmo assim' : 'Confirmar →'}
             </button>
           </div>
         </div>
-
       </div>
+
+      {resolveIdx !== null && (
+        <DayResolveDialog
+          row={rows[resolveIdx]}
+          schedule={schedule}
+          onClose={() => setResolveIdx(null)}
+          onApply={(patch, autoLine) => applyResolve(resolveIdx, patch, autoLine)}
+        />
+      )}
+      {showSpecial && specialMode && (
+        <SpecialEditor
+          rows={rows}
+          setRows={setRows}
+          setAutoNotes={setAutoNotes}
+          onClose={() => setShowSpecial(false)}
+        />
+      )}
     </div>
   )
 }
+
+function Tag({ text, warn }: { text: string; warn?: boolean }) {
+  return (
+    <span className={`text-[9px] rounded px-1 py-0.5 ${warn ? 'text-amber-700 bg-amber-100' : 'bg-gold-200/80 text-honey-700'}`}>
+      {text}
+    </span>
+  )
+}
+
+
