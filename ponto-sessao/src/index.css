@@ -1,0 +1,26 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    /* Fundo branco elegante com subtil detalhe em ouro */
+    background: linear-gradient(135deg, #ffffff 0%, #fffef7 50%, #fffaf0 100%);
+    background-attachment: fixed;
+    min-height: 100vh;
+    color: #4a3d2d;
+  }
+}
+
+@media print {
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  body { 
+    margin: 0; 
+    padding: 0;
+    background: white !important;
+  }
+  @page { size: A4 portrait; margin: 0; }
+}
