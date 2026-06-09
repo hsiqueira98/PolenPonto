@@ -1,4 +1,6 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import os
+
+content = '''import { useState, useRef, useEffect, useCallback } from 'react'
 import { parseAfd } from './parseAfd'
 import type { AfdParseResult, FoundEmployee } from './parseAfd'
 import { buildReport, toMin, pad2, daysInMonth, WEEKDAYS, fromMin, exportToCsv } from './calc'
@@ -13,7 +15,7 @@ function todayMonth() {
   const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`
 }
 function parseMonth(v: string) {
-  const [y, m] = v.split('-').map(Number); if (!y || !m) return null; return { year: y, month: m }
+  const [y, m] = v.split(\'-\').map(Number); if (!y || !m) return null; return { year: y, month: m }
 }
 function monthLabel(v: string) {
   const p = parseMonth(v); if (!p) return v; return `${MONTH_NAMES[p.month - 1]} de ${p.year}`
@@ -42,7 +44,7 @@ function HolidayPicker({ month, holidays, onChange }: {
     <div>
       <label className="block text-xs font-semibold text-honey-900/70 mb-2">
         Folgas e Feriados
-        {holidays.size > 0 && <span className="ml-2 text-honey-700 font-bold">{holidays.size} marcado{holidays.size !== 1 ? 's' : ''}</span>}
+        {holidays.size > 0 && <span className="ml-2 text-honey-700 font-bold">{holidays.size} marcado{holidays.size !== 1 ? \'s\' : \'\'}</span>}
       </label>
       <div className="flex flex-wrap gap-1">
         {days.map(({ d, date, wday }) => {
@@ -53,10 +55,10 @@ function HolidayPicker({ month, holidays, onChange }: {
               disabled={isWkd}
               className={`w-8 h-8 rounded-lg text-xs font-semibold transition-all
                 ${isHol
-                  ? 'bg-honey-700 text-white shadow-md shadow-gold-200'
+                  ? \'bg-honey-700 text-white shadow-md shadow-gold-200\'
                   : isWkd
-                    ? 'bg-honey-100/70 text-honey-700/80 border border-honey-200/40 cursor-default'
-                    : 'bg-white/80 border border-gold-200 text-honey-900 hover:border-gold-400 hover:bg-gold-50'
+                    ? \'bg-honey-100/70 text-honey-700/80 border border-honey-200/40 cursor-default\'
+                    : \'bg-white/80 border border-gold-200 text-honey-900 hover:border-gold-400 hover:bg-gold-50\'
                 }`}>
               {pad2(d)}
             </button>
@@ -80,23 +82,23 @@ function EmployeeSelector({ employees, selected, onToggle, onSelectAll, onClose,
         <div className="px-5 py-4 border-b border-gold-200/40 flex items-start justify-between bg-white/40">
           <div>
             <h2 className="font-bold text-honey-950 text-base">Funcionários no arquivo</h2>
-            <p className="text-xs text-honey-700/60 mt-0.5">{employees.length} registro{employees.length !== 1 ? 's' : ''} encontrado{employees.length !== 1 ? 's' : ''}</p>
+            <p className="text-xs text-honey-700/60 mt-0.5">{employees.length} registro{employees.length !== 1 ? \'s\' : \'\'} encontrado{employees.length !== 1 ? \'s\' : \'\'}</p>
           </div>
           <button onClick={onClose} className="text-gold-400 hover:text-honey-800 w-8 h-8 rounded-lg hover:bg-gold-100 flex items-center justify-center text-xl transition-colors">×</button>
         </div>
         <div className="px-5 py-2 border-b border-gold-100 flex items-center justify-between bg-white/20">
           <button onClick={onSelectAll} className="text-xs font-semibold text-honey-700 hover:text-honey-900 transition-colors">
-            {allSel ? 'Desmarcar todos' : 'Selecionar todos'}
+            {allSel ? \'Desmarcar todos\' : \'Selecionar todos\'}
           </button>
-          <span className="text-xs text-honey-700/50">{selected.size} selecionado{selected.size !== 1 ? 's' : ''}</span>
+          <span className="text-xs text-honey-700/50">{selected.size} selecionado{selected.size !== 1 ? \'s\' : \'\'}</span>
         </div>
         <div className="max-h-64 overflow-y-auto divide-y divide-gold-100/50 bg-white/10">
           {employees.map(emp => {
             const sel = selected.has(emp.key)
             return (
               <button key={emp.key} onClick={() => onToggle(emp.key)}
-                className={`w-full text-left px-5 py-3 flex items-center gap-3 transition-colors ${sel ? 'bg-gold-50/60' : 'hover:bg-gold-50/30'}`}>
-                <span className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-all ${sel ? 'bg-honey-700 border-honey-700' : 'border-gold-300'}`}>
+                className={`w-full text-left px-5 py-3 flex items-center gap-3 transition-colors ${sel ? \'bg-gold-50/60\' : \'hover:bg-gold-50/30\'}`}>
+                <span className={`w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-all ${sel ? \'bg-honey-700 border-honey-700\' : \'border-gold-300\'}`}>
                   {sel && <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 12 12"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                 </span>
                 <div className="min-w-0">
@@ -111,7 +113,7 @@ function EmployeeSelector({ employees, selected, onToggle, onSelectAll, onClose,
           <button id="cancelar-sel" onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-medium border border-gold-200 bg-white/60 hover:bg-gold-100 transition-colors">Cancelar</button>
           <button id="calcular" onClick={onCalculate} disabled={selected.size === 0}
             className="flex-1 py-2.5 rounded-xl text-sm font-bold bg-honey-800 hover:bg-honey-900 text-white transition-colors disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-gold-200">
-            Calcular{selected.size > 0 ? ` (${selected.size})` : ''}
+            Calcular{selected.size > 0 ? ` (${selected.size})` : \'\'}
           </button>
         </div>
       </div>
@@ -119,30 +121,30 @@ function EmployeeSelector({ employees, selected, onToggle, onSelectAll, onClose,
   )
 }
 
-type Screen = 'home' | 'review' | 'results'
+type Screen = \'home\' | \'review\' | \'results\'
 
 export default function App() {
   const [month, setMonth] = useState(todayMonth)
-  const [carga, setCarga] = useState('08:00')
-  const [empresa, setEmpresa] = useState('')
-  const [cnpj, setCnpj] = useState('')
+  const [carga, setCarga] = useState(\'08:00\')
+  const [empresa, setEmpresa] = useState(\'\')
+  const [cnpj, setCnpj] = useState(\'\')
   const [toleranceCLT, setToleranceCLT] = useState(true)
   const [holidays, setHolidays] = useState<Set<string>>(new Set())
   const [afd, setAfd] = useState<AfdParseResult | null>(null)
-  const [fileName, setFileName] = useState('')
+  const [fileName, setFileName] = useState(\'\')
   const [showSelector, setShowSelector] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [reviewQueue, setReviewQueue] = useState<EmployeeReport[]>([])
   const [reviewIndex, setReviewIndex] = useState(0)
   const [confirmedReports, setConfirmedReports] = useState<EmployeeReport[]>([])
-  const [screen, setScreen] = useState<Screen>('home')
+  const [screen, setScreen] = useState<Screen>(\'home\')
   const [isDirty, setIsDirty] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     const fn = (e: BeforeUnloadEvent) => { if (isDirty) e.preventDefault() }
-    window.addEventListener('beforeunload', fn)
-    return () => window.removeEventListener('beforeunload', fn)
+    window.addEventListener(\'beforeunload\', fn)
+    return () => window.removeEventListener(\'beforeunload\', fn)
   }, [isDirty])
 
   const handleMonthChange = useCallback((v: string) => {
@@ -157,8 +159,8 @@ export default function App() {
       const parsed = parseAfd(ev.target?.result as string)
       setAfd(parsed); setSelected(new Set()); setShowSelector(true)
     }
-    reader.readAsText(file, 'latin1')
-    e.target.value = ''
+    reader.readAsText(file, \'latin1\')
+    e.target.value = \'\'
   }, [])
 
   const toggleEmployee = useCallback((key: string) => {
@@ -176,22 +178,22 @@ export default function App() {
     const dailyMin = toMin(carga) ?? 480
     const initial = afd.employees
       .filter(emp => selected.has(emp.key))
-      .map(emp => buildReport(emp.key, emp.displayName, afd.marks[emp.key] ?? {}, p.year, p.month, dailyMin, afd.defaultSchedule, holidays, toleranceCLT, emp.cpf))
+      .map(emp => buildReport(emp.key, emp.displayName, afd.marks[emp.key] ?? {}, p.year, p.month, dailyMin, afd.defaultSchedule, holidays, toleranceCLT, emp.cpf, emp.key))
     setReviewQueue(initial); setReviewIndex(0); setConfirmedReports([])
-    setShowSelector(false); setScreen('review'); setIsDirty(true)
+    setShowSelector(false); setScreen(\'review\'); setIsDirty(true)
   }, [afd, selected, month, carga, holidays, toleranceCLT])
 
   const handleReviewConfirm = useCallback((updated: EmployeeReport) => {
     setConfirmedReports(prev => {
       const next = [...prev, updated]
-      if (reviewIndex + 1 >= reviewQueue.length) setScreen('results')
+      if (reviewIndex + 1 >= reviewQueue.length) setScreen(\'results\')
       else setReviewIndex(i => i + 1)
       return next
     })
   }, [reviewIndex, reviewQueue.length])
 
   const handleReviewCancel = useCallback(() => {
-    setScreen('home'); setShowSelector(false)
+    setScreen(\'home\'); setShowSelector(false)
   }, [])
 
   const dailyMin = toMin(carga) ?? 480
@@ -200,10 +202,10 @@ export default function App() {
     totalWorked: confirmedReports.reduce((s, r) => s + r.totalWorked, 0),
     totalBalance: confirmedReports.reduce((s, r) => s + r.totalBalance, 0),
     debitors: confirmedReports.filter(r => r.totalBalance < -60).length,
-    onVacation: confirmedReports.filter(r => r.rows.some(row => row.absence === 'vacation')).length,
+    onVacation: confirmedReports.filter(r => r.rows.some(row => row.absence === \'vacation\')).length,
   } : null
 
-  if (screen === 'home') return (
+  if (screen === \'home\') return (
     <div className="min-h-screen flex flex-col items-center justify-center px-4 py-8 relative">
       <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
         <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-gold-200/25 blur-[120px]" />
@@ -273,7 +275,7 @@ export default function App() {
     </div>
   )
 
-  if (screen === 'review' && reviewQueue.length > 0) {
+  if (screen === \'review\' && reviewQueue.length > 0) {
     const current = reviewQueue[reviewIndex]
     const total = reviewQueue.length
     return (
@@ -303,7 +305,7 @@ export default function App() {
         <div className="absolute bottom-[-10%] right-[-10%] w-[60%] h-[60%] rounded-full bg-honey-200/20 blur-[150px]" />
       </div>
       <div className="print:hidden sticky top-0 z-10 bg-white/70 backdrop-blur-xl border-b border-gold-200/40 px-4 py-3 flex items-center gap-3 shadow-sm">
-        <button id="inicio" onClick={() => setScreen('home')}
+        <button id="inicio" onClick={() => setScreen(\'home\')}
           className="flex items-center gap-1.5 text-sm text-honey-800 hover:text-honey-950 transition-colors">
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7"/>
@@ -312,10 +314,10 @@ export default function App() {
         </button>
         <span className="text-gold-400">|</span>
         <span className="text-sm text-honey-900">
-          <b>{confirmedReports.length}</b> relatório{confirmedReports.length !== 1 ? 's' : ''} · {monthLabel(month)}
+          <b>{confirmedReports.length}</b> relatório{confirmedReports.length !== 1 ? \'s\' : \'\'} · {monthLabel(month)}
         </span>
         <div className="ml-auto flex items-center gap-2">
-          <button id="novo-calculo" onClick={() => { setShowSelector(true); setScreen('home') }}
+          <button id="novo-calculo" onClick={() => { setShowSelector(true); setScreen(\'home\') }}
             className="text-sm font-medium text-honey-800 hover:text-honey-950 border border-gold-200 bg-white/60 px-3 py-1.5 rounded-xl transition-colors">
             Novo cálculo
           </button>
@@ -340,8 +342,8 @@ export default function App() {
           <div className="bg-white/70 backdrop-blur-xl rounded-2xl border border-gold-200/40 shadow-sm px-5 py-3 flex flex-wrap gap-4 items-center">
             <p className="text-[10px] font-bold text-honey-700 uppercase tracking-widest mr-1">Consolidado</p>
             <span className="text-xs text-honey-800"><b className="font-mono text-honey-950">{fromMin(summary.totalWorked)}</b> horas no total</span>
-            <span className={`text-xs font-semibold font-mono ${summary.totalBalance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-              Saldo total: {(summary.totalBalance >= 0 ? '+' : '') + fromMin(summary.totalBalance)}
+            <span className={`text-xs font-semibold font-mono ${summary.totalBalance >= 0 ? \'text-emerald-600\' : \'text-red-600\'}`}>
+              Saldo total: {(summary.totalBalance >= 0 ? \'+\' : \'\') + fromMin(summary.totalBalance)}
             </span>
             {summary.debitors > 0 && (
               <span className="text-xs bg-red-50 border border-red-200 text-red-700 rounded-lg px-2 py-0.5 font-semibold">
@@ -365,3 +367,8 @@ export default function App() {
     </div>
   )
 }
+'''
+
+with open('d:/sistema-local/PolenPonto/src/App.tsx', 'w', encoding='utf-8') as f:
+    f.write(content)
+print(f"App.tsx written: {len(content.splitlines())} lines")

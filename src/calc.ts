@@ -2,7 +2,7 @@ import type { Schedule } from './parseAfd'
 
 export type { Schedule }
 
-export type AbsenceType = 'justified' | 'unjustified' | null
+export type AbsenceType = 'justified' | 'unjustified' | 'vacation' | null
 export type AbsenceScope = 'full' | 'period1' | 'period2' | null
 export type DayGapIssue = 'none' | 'empty' | 'partial' | 'extra_punches' | 'odd_punches'
 
@@ -23,9 +23,7 @@ export interface DayRow {
   sai1: string
   ent2: string
   sai2: string
-  /** Batidas extras além das 4 colunas padrão (modo normal) */
   extraPunches: string[]
-  /** Intervalos completos — usado em Recursos Especiais */
   intervals: PunchInterval[]
   generated: boolean
   gapIssue: DayGapIssue
@@ -44,6 +42,13 @@ export interface EmployeeReport {
   specialMode: boolean
   notes: string
   autoNotes: string[]
+  cpf?: string
+  pis?: string
+  role?: string
+  department?: string
+  admissionDate?: string
+  toleranceCLT: boolean
+  previousBalanceMin?: number
 }
 
 export const WEEKDAYS = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
@@ -74,21 +79,16 @@ export function getEffectiveDailyMinutes(schedule: Schedule, defaultDailyMinutes
   const breakStart = toMin(schedule.breakStart)
   const breakEnd = toMin(schedule.breakEnd)
   const workEnd = toMin(schedule.workEnd)
-
-  const isHalfDay =
-    breakStart === null || breakEnd === null || breakStart === breakEnd
-
+  const isHalfDay = breakStart === null || breakEnd === null || breakStart === breakEnd
   if (isHalfDay && workStart !== null && workEnd !== null && workEnd > workStart) {
     return workEnd - workStart
   }
-
   if (workStart !== null && breakStart !== null && breakEnd !== null && workEnd !== null) {
-    const period1 = Math.max(0, breakStart - workStart)
-    const period2 = Math.max(0, workEnd - breakEnd)
-    const total = period1 + period2
+    const p1 = Math.max(0, breakStart - workStart)
+    const p2 = Math.max(0, workEnd - breakEnd)
+    const total = p1 + p2
     return total > 0 ? total : defaultDailyMinutes
   }
-
   return defaultDailyMinutes
 }
 
@@ -102,26 +102,11 @@ export function randomNear(base: string, spread = 12): string {
   return fromMin(Math.max(0, Math.min(b + randInt(-spread, spread), 23 * 60 + 59)))
 }
 
-export function calcWorkedFromFour(
-  e1: string,
-  s1: string,
-  e2: string,
-  s2: string,
-): number | null {
-  const a = toMin(e1)
-  const b = toMin(s1)
-  const c = toMin(e2)
-  const d = toMin(s2)
-  let total = 0
-  let has = false
-  if (a !== null && b !== null && b > a) {
-    total += b - a
-    has = true
-  }
-  if (c !== null && d !== null && d > c) {
-    total += d - c
-    has = true
-  }
+export function calcWorkedFromFour(e1: string, s1: string, e2: string, s2: string): number | null {
+  const a = toMin(e1), b = toMin(s1), c = toMin(e2), d = toMin(s2)
+  let total = 0, has = false
+  if (a !== null && b !== null && b > a) { total += b - a; has = true }
+  if (c !== null && d !== null && d > c) { total += d - c; has = true }
   return has ? total : null
 }
 
@@ -135,25 +120,15 @@ export function timesToIntervals(times: string[]): PunchInterval[] {
 }
 
 export function calcWorkedFromIntervals(intervals: PunchInterval[]): number | null {
-  let total = 0
-  let has = false
+  let total = 0, has = false
   for (const { entrada, saida } of intervals) {
-    const a = toMin(entrada)
-    const b = toMin(saida)
-    if (a !== null && b !== null && b > a) {
-      total += b - a
-      has = true
-    }
+    const a = toMin(entrada), b = toMin(saida)
+    if (a !== null && b !== null && b > a) { total += b - a; has = true }
   }
   return has ? total : null
 }
 
-export function intervalsToSlots(intervals: PunchInterval[]): {
-  ent1: string
-  sai1: string
-  ent2: string
-  sai2: string
-} {
+export function intervalsToSlots(intervals: PunchInterval[]) {
   return {
     ent1: intervals[0]?.entrada ?? '',
     sai1: intervals[0]?.saida ?? '',
@@ -165,10 +140,7 @@ export function intervalsToSlots(intervals: PunchInterval[]): {
 export function formatIntervalsShort(intervals: PunchInterval[]): string {
   return intervals
     .filter(iv => iv.entrada)
-    .map(iv => {
-      const out = iv.saida ? `${iv.entrada}–${iv.saida}` : `${iv.entrada}–?`
-      return out
-    })
+    .map(iv => iv.saida ? `${iv.entrada}–${iv.saida}` : `${iv.entrada}–?`)
     .join(', ')
 }
 
@@ -178,6 +150,7 @@ export function formatAutoNoteSpecial(dayLabel: string, intervals: PunchInterval
 
 export function absenceLabel(absence: AbsenceType, scope: AbsenceScope): string {
   if (absence === null) return ''
+  if (absence === 'vacation') return 'Férias'
   const kind = absence === 'justified' ? 'Falta justificada' : 'Falta injustificada'
   if (scope === 'period1') return `${kind} (manhã)`
   if (scope === 'period2') return `${kind} (tarde)`
@@ -189,7 +162,7 @@ export function isWeekendOrHoliday(row: DayRow): boolean {
 }
 
 export function isFullDayAbsent(row: DayRow): boolean {
-  return row.absence !== null && (row.absenceScope === 'full' || row.absenceScope === null)
+  return row.absence !== null && (row.absenceScope === 'full' || row.absenceScope === null || row.absence === 'vacation')
 }
 
 export function canEditPeriod(row: DayRow, period: 1 | 2): boolean {
@@ -206,99 +179,57 @@ export function classifyGapIssue(times: string[], isOff: boolean, generated: boo
   if (times.length === 0) return 'empty'
   if (times.length > 4) return 'extra_punches'
   if (times.length % 2 !== 0) return 'odd_punches'
-  if (generated || (times.length > 0 && times.length < 4)) return 'partial'
+  if (generated) return 'partial'
+  if (times.length === 2) return 'none'
+  if (times.length > 0 && times.length < 4) return 'partial'
   return 'none'
 }
 
-export function calcDayBalance(row: DayRow, dailyMin: number): number | null {
+export function calcDayBalance(row: DayRow, dailyMin: number, toleranceCLT = false): number | null {
   if (isWeekendOrHoliday(row)) return null
-
+  if (row.absence === 'vacation') return null
   const half = Math.floor(dailyMin / 2)
-
+  let raw = 0
   if (row.absence === 'justified') {
     if (isFullDayAbsent(row)) return null
-    const expected =
-      row.absenceScope === 'period1' || row.absenceScope === 'period2' ? half : dailyMin
+    const expected = row.absenceScope === 'period1' || row.absenceScope === 'period2' ? half : dailyMin
     if (row.workedMin === null) return null
-    return row.workedMin - expected
-  }
-
-  if (row.absence === 'unjustified') {
+    raw = row.workedMin - expected
+  } else if (row.absence === 'unjustified') {
     if (isFullDayAbsent(row)) return -dailyMin
-    if (row.absenceScope === 'period1') {
-      return row.workedMin !== null ? row.workedMin - half : -half
-    }
-    if (row.absenceScope === 'period2') {
-      return row.workedMin !== null ? row.workedMin - half : -half
-    }
-    return -dailyMin
+    raw = row.workedMin !== null ? row.workedMin - half : -half
+  } else {
+    if (row.workedMin === null) return null
+    raw = row.workedMin - dailyMin
   }
-
-  if (row.workedMin === null) return null
-  return row.workedMin - dailyMin
+  if (toleranceCLT && Math.abs(raw) <= 10) return 0
+  return raw
 }
 
 export function computeRowWorkedMin(row: DayRow, specialMode: boolean): number | null {
   if (isWeekendOrHoliday(row)) return null
   if (isFullDayAbsent(row)) return null
-  if (specialMode && row.intervals.length > 0) {
-    return calcWorkedFromIntervals(row.intervals)
-  }
+  if (row.generated) return null
+  if (specialMode && row.intervals.length > 0) return calcWorkedFromIntervals(row.intervals)
   return calcWorkedFromFour(row.ent1, row.sai1, row.ent2, row.sai2)
 }
 
-function fillStandardSlots(
-  times: string[],
-  schedule: Schedule,
-  isOff: boolean,
-): {
-  ent1: string
-  sai1: string
-  ent2: string
-  sai2: string
-  extraPunches: string[]
-  generated: boolean
-} {
-  let ent1 = ''
-  let sai1 = ''
-  let ent2 = ''
-  let sai2 = ''
-  let generated = false
+function fillStandardSlots(times: string[], _schedule: Schedule, isOff: boolean) {
+  let ent1 = '', sai1 = '', ent2 = '', sai2 = '', generated = false
   const extraPunches = times.length > 4 ? times.slice(4) : []
-
   if (isOff) {
-    if (times.length >= 1) ent1 = times[0]
-    if (times.length >= 2) sai1 = times[1]
-    if (times.length >= 3) ent2 = times[2]
-    if (times.length >= 4) sai2 = times[3]
+    ent1 = times[0] ?? ''; sai1 = times[1] ?? ''; ent2 = times[2] ?? ''; sai2 = times[3] ?? ''
   } else if (times.length === 0) {
-    ent1 = randomNear(schedule.workStart)
-    sai1 = randomNear(schedule.breakStart)
-    ent2 = randomNear(schedule.breakEnd)
-    sai2 = randomNear(schedule.workEnd)
-    generated = true
+    // sem batidas — deixa vazio
   } else if (times.length === 1) {
     ent1 = times[0]
-    sai1 = randomNear(schedule.breakStart)
-    ent2 = randomNear(schedule.breakEnd)
-    sai2 = randomNear(schedule.workEnd)
-    generated = true
   } else if (times.length === 2) {
-    ent1 = times[0]
-    sai1 = times[1]
+    ent1 = times[0]; sai1 = times[1]
   } else if (times.length === 3) {
-    ent1 = times[0]
-    sai1 = times[1]
-    ent2 = times[2]
-    sai2 = randomNear(schedule.workEnd)
-    generated = true
+    ent1 = times[0]; sai1 = times[1]; ent2 = times[2]
   } else {
-    ent1 = times[0]
-    sai1 = times[1]
-    ent2 = times[2]
-    sai2 = times[3]
+    ent1 = times[0]; sai1 = times[1]; ent2 = times[2]; sai2 = times[3]
   }
-
   return { ent1, sai1, ent2, sai2, extraPunches, generated }
 }
 
@@ -311,16 +242,14 @@ export function buildReport(
   dailyMinutes: number,
   schedule: Schedule,
   holidays: Set<string>,
+  toleranceCLT: boolean,
+  cpf?: string,
+  pis?: string,
 ): EmployeeReport {
   const total = daysInMonth(year, month)
   const rows: DayRow[] = []
-  let totalWorked = 0
-  let totalBalance = 0
-  let workedDays = 0
-  let utilDays = 0
-
-  let anyExtra = false
-  let anyOdd = false
+  let totalWorked = 0, totalBalance = 0, workedDays = 0, utilDays = 0
+  let anyExtra = false, anyOdd = false
 
   for (let d = 1; d <= total; d++) {
     const date = `${year}-${pad2(month)}-${pad2(d)}`
@@ -328,103 +257,58 @@ export function buildReport(
     const isHoliday = holidays.has(date)
     const isOff = wday === 0 || wday === 6 || isHoliday
     const times = marks[date] ? [...marks[date]].sort() : []
-
     if (!isOff) utilDays++
     if (times.length > 4) anyExtra = true
     if (times.length > 0 && times.length % 2 !== 0) anyOdd = true
-
     const slots = fillStandardSlots(times, schedule, isOff)
     const intervals = timesToIntervals(times)
     const gapIssue = classifyGapIssue(times, isOff, slots.generated)
-
-    const row: DayRow = {
-      date,
-      dayLabel: `${pad2(d)} ${WEEKDAYS[wday]}`,
-      weekday: wday,
-      isHoliday,
-      isAtestado: false,
-      absence: null,
-      absenceScope: null,
-      ent1: slots.ent1,
-      sai1: slots.sai1,
-      ent2: slots.ent2,
-      sai2: slots.sai2,
-      extraPunches: slots.extraPunches,
-      intervals,
-      generated: slots.generated,
-      gapIssue,
-      workedMin: null,
-    }
-
-    rows.push(row)
+    rows.push({
+      date, dayLabel: `${pad2(d)} ${WEEKDAYS[wday]}`, weekday: wday,
+      isHoliday, isAtestado: false, absence: null, absenceScope: null,
+      ent1: slots.ent1, sai1: slots.sai1, ent2: slots.ent2, sai2: slots.sai2,
+      extraPunches: slots.extraPunches, intervals, generated: slots.generated,
+      gapIssue, workedMin: null,
+    })
   }
 
   const specialMode = anyExtra || anyOdd
   const autoNotes: string[] = []
-  if (specialMode) {
-    autoNotes.push('Recursos Especiais ativado para este funcionário.')
-  }
+  if (specialMode) autoNotes.push('Recursos Especiais ativado para este funcionário.')
 
   const effectiveMin = getEffectiveDailyMinutes(schedule, dailyMinutes)
   for (const row of rows) {
     const isOff = isWeekendOrHoliday(row)
     row.workedMin = isOff ? null : computeRowWorkedMin(row, specialMode)
-
-    const bal = calcDayBalance(row, effectiveMin)
+    const bal = calcDayBalance(row, effectiveMin, toleranceCLT)
     if (row.workedMin !== null && row.workedMin > 0 && !isOff && bal !== null) {
-      totalWorked += row.workedMin
-      workedDays++
-      totalBalance += bal
+      totalWorked += row.workedMin; workedDays++; totalBalance += bal
     }
-
     if (!isOff && specialMode) {
-      const hasSpecialPunches =
-        row.intervals.length > 2 ||
-        row.extraPunches.length > 0 ||
-        row.gapIssue === 'extra_punches' ||
-        row.gapIssue === 'odd_punches'
-      if (hasSpecialPunches && row.workedMin !== null && row.workedMin > 0) {
-        const line = formatAutoNoteSpecial(row.dayLabel, row.intervals, row.workedMin)
-        autoNotes.push(line)
+      const hasSpecial = row.intervals.length > 2 || row.extraPunches.length > 0 || row.gapIssue === 'extra_punches' || row.gapIssue === 'odd_punches'
+      if (hasSpecial && row.workedMin !== null && row.workedMin > 0) {
+        autoNotes.push(formatAutoNoteSpecial(row.dayLabel, row.intervals, row.workedMin))
       }
     }
   }
 
-  return {
-    key,
-    displayName,
-    rows,
-    totalWorked,
-    totalBalance,
-    workedDays,
-    utilDays,
-    schedule,
-    specialMode,
-    notes: '',
-    autoNotes,
-  }
+  return { key, displayName, rows, totalWorked, totalBalance, workedDays, utilDays, schedule, specialMode, notes: '', autoNotes, cpf, pis, toleranceCLT }
 }
 
 export function recompute(report: EmployeeReport, dailyMinutes: number): EmployeeReport {
   const effectiveMin = getEffectiveDailyMinutes(report.schedule, dailyMinutes)
-
   const rows = report.rows.map(row => {
     const isOff = isWeekendOrHoliday(row)
     const wm = isOff ? null : computeRowWorkedMin(row, report.specialMode)
     return { ...row, isAtestado: row.absence !== null, workedMin: wm }
   })
-
-  let totalWorked = 0
-  let totalBalance = 0
-  let workedDays = 0
-
+  let totalWorked = 0, totalBalance = 0, workedDays = 0
   for (const row of rows) {
     const isOff = isWeekendOrHoliday(row)
-    const bal = calcDayBalance(row, effectiveMin)
+    const bal = calcDayBalance(row, effectiveMin, report.toleranceCLT)
     if (row.workedMin !== null && row.workedMin > 0 && !isOff) {
       if (row.absence === null || (row.absence === 'justified' && !isFullDayAbsent(row))) {
-        totalWorked += row.workedMin
-        workedDays++
+        totalWorked += row.workedMin; workedDays++
       }
     }
     if (bal !== null && !isOff) {
@@ -433,11 +317,38 @@ export function recompute(report: EmployeeReport, dailyMinutes: number): Employe
       else if (row.absence === 'unjustified') totalBalance += bal
     }
   }
-
+  totalBalance += (report.previousBalanceMin ?? 0)
   return { ...report, rows, totalWorked, totalBalance, workedDays }
 }
 
 export function appendAutoNote(notes: string[], line: string): string[] {
   if (notes.includes(line)) return notes
   return [...notes, line]
+}
+
+export function exportToCsv(reports: EmployeeReport[], monthLabel: string) {
+  const headers = ['PIS', 'Nome', 'CPF', 'Cargo', 'Setor', 'Admissão', 'Dias Trabalhados', 'Total Horas', 'Saldo', 'Situação']
+  const rows = reports.map(r => {
+    const situacao = r.rows.some(row => row.absence === 'vacation') ? 'Férias' : r.totalBalance < -60 ? 'Débito' : r.totalBalance > 60 ? 'Crédito' : 'Regular'
+    return [
+      r.pis || r.key || '',
+      r.displayName,
+      r.cpf || '',
+      r.role || '',
+      r.department || '',
+      r.admissionDate || '',
+      r.workedDays,
+      fromMin(r.totalWorked),
+      (r.totalBalance >= 0 ? '+' : '') + fromMin(r.totalBalance),
+      situacao,
+    ]
+  })
+  const csv = '\uFEFF' + [headers.join(';'), ...rows.map(r => r.map(v => `"${v}"`).join(';'))].join('\n')
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `Ponto_${monthLabel.replace(/\s+/g, '_')}.csv`
+  document.body.appendChild(a); a.click(); document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
