@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import {
   fromMin,
+  toMin,
   recompute,
   randomNear,
   getEffectiveDailyMinutes,
@@ -24,6 +25,10 @@ import type {
   AbsenceScope,
   PunchInterval,
 } from './calc'
+import { VacationModal } from './VacationModal'
+import { MultiResolveModal } from './MultiResolveModal'
+import { JustifyModal } from './JustifyModal'
+import type { JustifyResult } from './JustifyModal'
 
 interface Props {
   report: EmployeeReport
@@ -54,11 +59,12 @@ function TimeCell({ value, onChange, generated, disabled }: {
   )
 }
 
-function DayResolveDialog({ row, schedule, onClose, onApply }: {
+function DayResolveDialog({ row, schedule, onClose, onApply, onOpenJustify }: {
   row: DayRow
   schedule: Schedule
   onClose: () => void
   onApply: (patch: Partial<DayRow>, autoLine?: string) => void
+  onOpenJustify: () => void
 }) {
   const issueLabel =
     row.gapIssue === 'empty' ? 'Nenhuma batida neste dia'
@@ -98,11 +104,7 @@ function DayResolveDialog({ row, schedule, onClose, onApply }: {
         <div className="px-5 py-4 space-y-4">
           <div>
             <p className="text-[10px] font-bold text-honey-700/70 uppercase tracking-wider mb-2">Falta justificada</p>
-            <div className="flex flex-wrap gap-2">
-              <ActionChip label="Dia inteiro" onClick={() => applyAbsence('justified', 'full')} />
-              <ActionChip label="Só manhã" onClick={() => applyAbsence('justified', 'period1')} />
-              <ActionChip label="Só tarde" onClick={() => applyAbsence('justified', 'period2')} />
-            </div>
+            <ActionChip label="Registrar falta justificada..." onClick={onOpenJustify} />
           </div>
           <div>
             <p className="text-[10px] font-bold text-honey-700/70 uppercase tracking-wider mb-2">Falta injustificada</p>
@@ -128,12 +130,12 @@ function DayResolveDialog({ row, schedule, onClose, onApply }: {
                   sai1: randomNear(schedule.breakStart),
                   ent2: randomNear(schedule.breakEnd),
                   sai2: randomNear(schedule.workEnd),
-                  generated: true,
-                  gapIssue: 'partial',
+                  generated: false,
+                  gapIssue: 'none',
                   absence: null,
                   absenceScope: null,
                   isAtestado: false,
-                }, `${row.dayLabel}: horários estimados regenerados.`)}
+                })}
               />
               {hasAbsence && (
                 <ActionChip
@@ -305,6 +307,22 @@ function AbsenceBadge({ row }: { row: DayRow }) {
 }
 
 export function ReviewModal({ report: initialReport, dailyMinutes, onConfirm, onCancel }: Props) {
+  const [displayName, setDisplayName] = useState(initialReport.displayName)
+  const [cpf, setCpf] = useState(initialReport.cpf || '')
+  const [pis, setPis] = useState(initialReport.pis || '')
+  const [role, setRole] = useState(initialReport.role || '')
+  const [department, setDepartment] = useState(initialReport.department || '')
+  const [admissionDate, setAdmissionDate] = useState(initialReport.admissionDate || '')
+  const [prevBalanceInput, setPrevBalanceInput] = useState(
+    initialReport.previousBalanceMin !== undefined && initialReport.previousBalanceMin !== 0
+      ? fromMin(Math.abs(initialReport.previousBalanceMin))
+      : ''
+  )
+  const [prevBalanceSign, setPrevBalanceSign] = useState<'+' | '-'>(
+    initialReport.previousBalanceMin !== undefined && initialReport.previousBalanceMin < 0 ? '-' : '+'
+  )
+  const [showVacation, setShowVacation] = useState(false)
+
   const [rows, setRows] = useState<DayRow[]>(initialReport.rows)
   const [schedule, setSchedule] = useState<Schedule>(initialReport.schedule)
   const [specialMode, setSpecialMode] = useState(initialReport.specialMode)
@@ -312,6 +330,9 @@ export function ReviewModal({ report: initialReport, dailyMinutes, onConfirm, on
   const [autoNotes, setAutoNotes] = useState<string[]>(initialReport.autoNotes)
   const [resolveIdx, setResolveIdx] = useState<number | null>(null)
   const [showSpecial, setShowSpecial] = useState(false)
+  const [showMultiResolve, setShowMultiResolve] = useState(false)
+  const [justifyRowIdx, setJustifyRowIdx] = useState<number | null>(null)
+  const [resolvedFlash, setResolvedFlash] = useState(false)
   const tableRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -321,10 +342,9 @@ export function ReviewModal({ report: initialReport, dailyMinutes, onConfirm, on
   const effectiveDailyMinutes = getEffectiveDailyMinutes(schedule, dailyMinutes)
 
   const pendingCount = rows.filter(
-    r => (r.generated || r.gapIssue !== 'none') && r.absence === null && !isWeekendOrHoliday(r),
+    r => r.gapIssue !== 'none' && r.absence === null && !isWeekendOrHoliday(r),
   ).length
 
-  const gapCount = rows.filter(r => r.gapIssue !== 'none' && r.absence === null && !isWeekendOrHoliday(r)).length
 
   function syncRowWorked(row: DayRow): DayRow {
     if (isWeekendOrHoliday(row) || isFullDayAbsent(row)) {
@@ -353,16 +373,23 @@ export function ReviewModal({ report: initialReport, dailyMinutes, onConfirm, on
     setAutoNotes(prev => appendAutoNote(prev, 'Recursos Especiais ativado para este funcionário.'))
   }
 
+  function disableSpecialMode() {
+    setSpecialMode(false)
+    setRows(prev => prev.map(r => {
+      if (isWeekendOrHoliday(r)) return r
+      return syncRowWorked({ ...r, intervals: [] })
+    }))
+  }
+
   // Auto-detect and enable special mode if there are multiple punches on any day
   useEffect(() => {
-    if (!specialMode) {
-      const hasMultiplePunches = rows.some(
-        r => !isWeekendOrHoliday(r) && (r.intervals.length > 1 || r.gapIssue === 'extra_punches')
-      )
-      if (hasMultiplePunches) {
-        enableSpecialMode()
-      }
+    const hasMultiplePunches = rows.some(
+      r => !isWeekendOrHoliday(r) && (r.intervals.length > 1 || r.gapIssue === 'extra_punches')
+    )
+    if (!specialMode && hasMultiplePunches) {
+      enableSpecialMode()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   function updateRow(i: number, patch: Partial<DayRow>, clearGenerated = false) {
@@ -390,16 +417,74 @@ export function ReviewModal({ report: initialReport, dailyMinutes, onConfirm, on
     setResolveIdx(null)
   }
 
+  function handleVacationConfirm(start: string, end: string) {
+    setRows(prev => prev.map(r => {
+      if (r.date >= start && r.date <= end) {
+        return { ...r, absence: 'vacation' as const, absenceScope: 'full' as const, ent1: '', sai1: '', ent2: '', sai2: '', extraPunches: [], intervals: [], generated: false, gapIssue: 'none' as const, workedMin: null }
+      }
+      return r
+    }))
+    const s = start.split('-').reverse().join('/')
+    const e = end.split('-').reverse().join('/')
+    const note = `Funcionário em gozo de férias no período de ${s} a ${e}.`
+    setNotes(prev => { const t = prev.trim(); return t.includes(note) ? prev : t ? `${t}\n${note}` : note })
+    setShowVacation(false)
+  }
 
+  function handleVacationClear() {
+    setRows(prev => prev.map(r => r.absence === 'vacation' ? { ...r, absence: null, absenceScope: null } : r))
+    setNotes(prev => prev.replace(/Funcionário em gozo de férias no período de .*\n?/g, '').trim())
+    setShowVacation(false)
+  }
+
+  function handleMultiResolveApply(patches: Map<number, Partial<DayRow>>, newAutoNotes: string[]) {
+    setRows(prev => {
+      const next = [...prev]
+      for (const [idx, patch] of patches) {
+        let updated: DayRow = { ...next[idx], ...patch }
+        updated = syncRowWorked(updated)
+        next[idx] = updated
+      }
+      return next
+    })
+    setAutoNotes(prev => {
+      let acc = prev
+      for (const line of newAutoNotes) acc = appendAutoNote(acc, line)
+      return acc
+    })
+    setShowMultiResolve(false)
+    setResolvedFlash(true)
+    setTimeout(() => setResolvedFlash(false), 3000)
+  }
+
+  function handleJustifyFromResolve(result: JustifyResult) {
+    if (justifyRowIdx === null) return
+    const scope = result.absenceScope
+    const patch: Partial<DayRow> = {
+      absence: result.absence,
+      absenceScope: result.absenceScope,
+      isAtestado: true,
+      generated: false,
+      gapIssue: 'none' as const,
+      ...(scope === 'full' || scope === null
+        ? { ent1: '', sai1: '', ent2: '', sai2: '' }
+        : scope === 'period1'
+          ? { ent1: '', sai1: '' }
+          : { ent2: '', sai2: '' }),
+    }
+    applyResolve(justifyRowIdx, patch, result.autoLine)
+    setJustifyRowIdx(null)
+  }
 
   function handleConfirm() {
+    const prevMin = prevBalanceInput.trim() ? (toMin(prevBalanceInput.trim()) ?? 0) : 0
+    const previousBalanceMin = prevBalanceSign === '-' ? -Math.abs(prevMin) : Math.abs(prevMin)
     const payload: EmployeeReport = {
       ...initialReport,
-      rows,
-      schedule,
-      specialMode,
-      notes: notes.trim(),
-      autoNotes,
+      displayName: displayName.trim() || initialReport.key,
+      cpf: cpf.trim(), pis: pis.trim(), role: role.trim(), department: department.trim(), admissionDate,
+      rows, schedule, specialMode, notes: notes.trim(), autoNotes,
+      previousBalanceMin,
     }
     onConfirm(recompute(payload, dailyMinutes))
   }
@@ -421,8 +506,10 @@ export function ReviewModal({ report: initialReport, dailyMinutes, onConfirm, on
         else if (row.absence === 'unjustified') balance += bal
       }
     }
-    return { worked, balance }
-  }, [rows, effectiveDailyMinutes])
+    const prevMin = prevBalanceInput.trim() ? (toMin(prevBalanceInput.trim()) ?? 0) : 0
+    const prevSigned = prevBalanceSign === '-' ? -Math.abs(prevMin) : Math.abs(prevMin)
+    return { worked, balance: balance + prevSigned }
+  }, [rows, effectiveDailyMinutes, prevBalanceInput, prevBalanceSign])
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-honey-950/40 backdrop-blur-md">
@@ -430,49 +517,79 @@ export function ReviewModal({ report: initialReport, dailyMinutes, onConfirm, on
 
         {/* Header */}
         <div className="px-4 sm:px-5 py-3.5 border-b border-gold-200/40 flex items-start justify-between gap-3 flex-shrink-0 bg-white/40 backdrop-blur-sm">
-          <div className="min-w-0">
-            <h2 className="font-bold text-honey-950 text-base sm:text-lg truncate">{initialReport.displayName}</h2>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 group">
+              <input id="nome" type="text" value={displayName} onChange={e => setDisplayName(e.target.value)}
+                placeholder="Nome do Funcionário" title="Clique para editar o nome"
+                className="font-bold text-honey-950 text-base sm:text-lg flex-1 bg-transparent border-b-2 border-transparent hover:border-gold-300 focus:border-honey-700 focus:outline-none transition-colors" />
+              <svg className="w-3.5 h-3.5 text-honey-400 group-focus-within:text-honey-700 flex-shrink-0 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+              </svg>
+            </div>
             <p className="text-xs text-honey-700 mt-0.5">Revise os registros · {effectiveDailyMinutes < dailyMinutes ? 'meio período' : 'integral'} · {fromMin(effectiveDailyMinutes)}/dia</p>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             {pendingCount > 0 && (
-              <span className="hidden sm:flex items-center gap-1 bg-amber-100 border border-amber-300/60 rounded-lg px-2.5 py-1 text-[11px] font-semibold text-amber-900">
-                {pendingCount} pendente{pendingCount !== 1 ? 's' : ''}
+              <button type="button" onClick={() => setShowMultiResolve(true)}
+                className="hidden sm:flex items-center gap-1 bg-amber-100 border border-amber-300/60 rounded-lg px-2.5 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-200 transition-colors">
+                {pendingCount} incompleto{pendingCount !== 1 ? 's' : ''} · Resolver tudo
+              </button>
+            )}
+            {rows.some(r => r.absence === 'vacation') && (
+              <span className="hidden sm:flex items-center gap-1 bg-blue-50 border border-blue-200/60 rounded-lg px-2.5 py-1 text-[11px] font-semibold text-blue-800">
+                Férias registradas
               </span>
             )}
-            <button onClick={onCancel} aria-label="Fechar"
+            <button id="fechar-revisao" onClick={onCancel} aria-label="Fechar"
               className="text-honey-600 hover:text-honey-950 w-8 h-8 rounded-lg hover:bg-gold-100 flex items-center justify-center text-xl">×</button>
           </div>
         </div>
 
-        {/* Toolbar */}
-        <div className="px-4 sm:px-5 py-2.5 border-b border-gold-200/35 bg-gold-50/20 backdrop-blur-sm flex flex-wrap items-center gap-2 flex-shrink-0">
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={specialMode}
-              onChange={e => { if (e.target.checked) enableSpecialMode(); else setSpecialMode(false) }}
-              className="rounded border-gold-300 text-honey-800 focus:ring-gold-400"
-            />
-            <span className="text-xs font-semibold text-honey-900">Recursos Especiais</span>
-          </label>
-          {specialMode && (
-            <button type="button" onClick={() => setShowSpecial(true)}
-              className="text-xs font-medium px-3 py-1 rounded-lg bg-honey-800 text-white hover:bg-honey-900">
-              Editar intervalos
-            </button>
-          )}
-          {gapCount > 0 && (
-            <span className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
-              {gapCount} dia{gapCount !== 1 ? 's' : ''} com lacuna — use <b>Resolver</b>
-            </span>
-          )}
+        {/* Dados do Funcionário */}
+        <div className="px-4 sm:px-5 py-3 border-b border-gold-200/35 bg-white/50 backdrop-blur-sm flex-shrink-0 space-y-2.5">
+          <div className="flex flex-wrap gap-x-4 gap-y-2 items-center">
+            {([
+              { id: 'pis', label: 'PIS', val: pis, set: setPis, ph: '000.00000.00-0', w: 'w-[130px]' },
+              { id: 'cpf', label: 'CPF', val: cpf, set: setCpf, ph: '000.000.000-00', w: 'w-[120px]' },
+              { id: 'cargo', label: 'Cargo', val: role, set: setRole, ph: 'Função', w: 'w-[130px]' },
+              { id: 'setor', label: 'Setor', val: department, set: setDepartment, ph: 'Departamento', w: 'w-[130px]' },
+            ] as const).map(f => (
+              <div key={f.id} className="flex items-center gap-1.5">
+                <label htmlFor={f.id} className="text-[10px] font-bold text-honey-600 uppercase tracking-widest flex-shrink-0">{f.label}</label>
+                <input id={f.id} type="text" value={f.val} onChange={e => (f.set as (v: string) => void)(e.target.value)} placeholder={f.ph}
+                  className={`${f.w} border border-gold-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-gold-300/50 bg-white`} />
+              </div>
+            ))}
+            <div className="flex items-center gap-1.5">
+              <label htmlFor="admissao" className="text-[10px] font-bold text-honey-600 uppercase tracking-widest flex-shrink-0">Admissão</label>
+              <input id="admissao" type="date" value={admissionDate} onChange={e => setAdmissionDate(e.target.value)}
+                className="w-[130px] border border-gold-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-gold-300/50 bg-white" />
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-2 items-center">
+            <div className="flex items-center gap-2">
+              <label className="text-[10px] font-bold text-honey-600 uppercase tracking-widest flex-shrink-0">Saldo mês anterior</label>
+              <div className="flex items-center rounded-lg overflow-hidden border border-gold-200 bg-white shadow-sm">
+                <button type="button" onClick={() => setPrevBalanceSign('+')}
+                  className={`px-2.5 py-1.5 text-xs font-bold transition-colors ${prevBalanceSign === '+' ? 'bg-emerald-100 text-emerald-800' : 'text-honey-400 hover:bg-gold-50'}`}>+</button>
+                <button type="button" onClick={() => setPrevBalanceSign('-')}
+                  className={`px-2.5 py-1.5 text-xs font-bold border-l border-gold-200 transition-colors ${prevBalanceSign === '-' ? 'bg-red-100 text-red-700' : 'text-honey-400 hover:bg-gold-50'}`}>−</button>
+                <input id="saldo-anterior" type="time" value={prevBalanceInput} onChange={e => setPrevBalanceInput(e.target.value)}
+                  className="w-[80px] border-l border-gold-200 px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-inset focus:ring-2 focus:ring-gold-300/50 bg-white" />
+              </div>
+              {prevBalanceInput && (
+                <span className={`text-xs font-mono font-semibold ${prevBalanceSign === '-' ? 'text-red-600' : 'text-emerald-600'}`}>
+                  {prevBalanceSign}{prevBalanceInput}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
 
-        {/* Schedule */}
-        <div className="px-4 sm:px-5 py-2.5 border-b border-gold-200/20 flex-shrink-0 bg-white/30 backdrop-blur-sm">
-          <p className="text-[10px] font-bold text-honey-700/80 uppercase tracking-widest mb-2">Horário padrão (regeneração)</p>
-          <div className="flex flex-wrap gap-3 sm:gap-4">
+        {/* Toolbar: horário padrão + ações */}
+        <div className="px-4 sm:px-5 py-2.5 border-b border-gold-200/35 bg-gold-50/15 backdrop-blur-sm flex-shrink-0 space-y-2">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+            <span className="text-[10px] font-bold text-honey-600/70 uppercase tracking-widest whitespace-nowrap">Horário padrão</span>
             {([
               ['Entrada', 'workStart'],
               ['Almoço saída', 'breakStart'],
@@ -480,12 +597,48 @@ export function ReviewModal({ report: initialReport, dailyMinutes, onConfirm, on
               ['Saída', 'workEnd'],
             ] as [string, keyof Schedule][]).map(([label, field]) => (
               <div key={field} className="flex items-center gap-1.5">
-                <label className="text-[11px] text-honey-700 font-medium whitespace-nowrap">{label}</label>
+                <label className="text-[11px] text-honey-600 font-medium whitespace-nowrap">{label}</label>
                 <input type="time" value={schedule[field]}
                   onChange={e => setSchedule(s => ({ ...s, [field]: e.target.value }))}
-                  className="border border-gold-200 rounded-lg px-2 py-1 text-xs font-mono w-[88px] focus:outline-none focus:ring-2 focus:ring-gold-300/50 bg-white/80" />
+                  className="border border-gold-200 rounded-lg px-2 py-1 text-xs font-mono w-[84px] focus:outline-none focus:ring-2 focus:ring-gold-300/50 bg-white/80" />
               </div>
             ))}
+            <div className="ml-auto flex items-center gap-2">
+              <button type="button" onClick={() => setShowSpecial(true)}
+                className={`text-xs font-semibold px-3 py-1.5 rounded-lg bg-honey-800 text-white hover:bg-honey-900 transition-colors ${specialMode ? 'visible' : 'invisible'}`}>
+                Editar intervalos
+              </button>
+              <button type="button" onClick={() => { if (specialMode) disableSpecialMode(); else enableSpecialMode() }}
+                title="Funcionários que registram mais de 4 batidas por dia (pausas não remuneradas)"
+                className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors ${
+                  specialMode
+                    ? 'bg-honey-100 border-honey-300 text-honey-800 hover:bg-honey-200'
+                    : 'bg-white border-gold-200 text-honey-500 hover:border-gold-300 hover:text-honey-700'
+                }`}>
+                Recursos Especiais {specialMode ? '· ativo' : '· inativo'}
+              </button>
+              {resolvedFlash ? (
+                <span className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-100 border border-emerald-300 text-emerald-800 transition-all">
+                  ✓ Resolvido
+                </span>
+              ) : pendingCount > 0 ? (
+                <button type="button" onClick={() => setShowMultiResolve(true)}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-amber-100 border border-amber-300/60 text-amber-900 hover:bg-amber-200 transition-colors">
+                  {pendingCount} incompleto{pendingCount !== 1 ? 's' : ''} · Resolver
+                </button>
+              ) : null}
+              <button id="ferias" type="button" onClick={() => setShowVacation(true)}
+                className={`flex items-center gap-1.5 text-xs font-bold px-3.5 py-1.5 rounded-lg border transition-colors
+                  ${rows.some(r => r.absence === 'vacation')
+                    ? 'bg-blue-600 hover:bg-blue-700 text-white border-blue-500'
+                    : 'bg-honey-700 hover:bg-honey-800 text-white border-honey-600'
+                  }`}>
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 21l6-6m0 0l6.586-6.586a2 2 0 012.828 0l2.172 2.172a2 2 0 010 2.828L14 19.5M9 15l-6 6M21 3l-3 3m-3-3l3 3" />
+                </svg>
+                {rows.some(r => r.absence === 'vacation') ? 'Editar Férias' : 'Férias'}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -511,7 +664,8 @@ export function ReviewModal({ report: initialReport, dailyMinutes, onConfirm, on
                 const needsResolve = row.gapIssue !== 'none' && row.absence === null && !isOff
 
                 let rowBg = 'bg-white/70'
-                if (row.absence === 'justified') rowBg = 'bg-amber-50/70'
+                if (row.absence === 'vacation') rowBg = 'bg-blue-50/60'
+                else if (row.absence === 'justified') rowBg = 'bg-amber-50/70'
                 else if (row.absence === 'unjustified') rowBg = 'bg-red-50/50'
                 else if (row.isHoliday) rowBg = 'bg-gold-50/60'
                 else if (row.weekday === 0 || row.weekday === 6) rowBg = 'bg-gold-50/30'
@@ -571,7 +725,7 @@ export function ReviewModal({ report: initialReport, dailyMinutes, onConfirm, on
                     </td>
 
                     <td className="px-3 py-1.5 align-middle text-right pr-4">
-                      {!isOff && (
+                      {!isOff && row.absence !== 'vacation' && (
                         <button
                           type="button"
                           onClick={() => setResolveIdx(i)}
@@ -643,6 +797,22 @@ export function ReviewModal({ report: initialReport, dailyMinutes, onConfirm, on
           schedule={schedule}
           onClose={() => setResolveIdx(null)}
           onApply={(patch, autoLine) => applyResolve(resolveIdx, patch, autoLine)}
+          onOpenJustify={() => { setJustifyRowIdx(resolveIdx); setResolveIdx(null) }}
+        />
+      )}
+      {justifyRowIdx !== null && (
+        <JustifyModal
+          dayLabel={rows[justifyRowIdx].dayLabel}
+          onConfirm={handleJustifyFromResolve}
+          onClose={() => setJustifyRowIdx(null)}
+        />
+      )}
+      {showMultiResolve && (
+        <MultiResolveModal
+          rows={rows}
+          schedule={schedule}
+          onApplyAll={handleMultiResolveApply}
+          onClose={() => setShowMultiResolve(false)}
         />
       )}
       {showSpecial && specialMode && (
@@ -651,6 +821,16 @@ export function ReviewModal({ report: initialReport, dailyMinutes, onConfirm, on
           setRows={setRows}
           setAutoNotes={setAutoNotes}
           onClose={() => setShowSpecial(false)}
+        />
+      )}
+      {showVacation && (
+        <VacationModal
+          month={rows.length > 0 ? rows[0].date.substring(0, 7) : ''}
+          existingStart={rows.find(r => r.absence === 'vacation')?.date}
+          existingEnd={[...rows].reverse().find(r => r.absence === 'vacation')?.date}
+          onConfirm={handleVacationConfirm}
+          onClear={handleVacationClear}
+          onClose={() => setShowVacation(false)}
         />
       )}
     </div>
