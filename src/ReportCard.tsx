@@ -24,6 +24,7 @@ interface Props {
   empresa: string
   cnpj: string
   isLast: boolean
+  onEdit?: () => void
 }
 
 function DayCells({ row, isOff }: { row: DayRow; isOff: boolean }) {
@@ -56,7 +57,7 @@ function DayCells({ row, isOff }: { row: DayRow; isOff: boolean }) {
   )
 }
 
-export function ReportCard({ report, month, carga, empresa, cnpj, isLast }: Props) {
+export function ReportCard({ report, month, carga, empresa, cnpj, isLast, onEdit }: Props) {
   const cargaMin = toMin(carga) ?? 480
   const effectiveMin = getEffectiveDailyMinutes(report.schedule, cargaMin)
   const extras = Math.max(0, report.totalBalance)
@@ -89,9 +90,18 @@ export function ReportCard({ report, month, carga, empresa, cnpj, isLast }: Prop
               )}
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-start">
             <Pill label="Trabalhado" value={fromMin(report.totalWorked)} />
             <Pill label="Saldo" value={(saldoPos ? '+' : '') + fromMin(report.totalBalance)} variant={saldoPos ? 'green' : 'red'} />
+            {onEdit && (
+              <button type="button" onClick={onEdit}
+                className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-xl border border-gold-200 bg-white/80 text-honey-700 hover:bg-gold-50 hover:border-gold-300 transition-colors self-end">
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                </svg>
+                Editar
+              </button>
+            )}
           </div>
         </div>
 

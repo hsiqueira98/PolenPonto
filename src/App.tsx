@@ -181,18 +181,35 @@ export default function App() {
     setShowSelector(false); setScreen('review'); setIsDirty(true)
   }, [afd, selected, month, carga, holidays, toleranceCLT])
 
+  const [editingKey, setEditingKey] = useState<string | null>(null)
+
   const handleReviewConfirm = useCallback((updated: EmployeeReport) => {
-    setConfirmedReports(prev => {
-      const next = [...prev, updated]
-      if (reviewIndex + 1 >= reviewQueue.length) setScreen('results')
-      else setReviewIndex(i => i + 1)
-      return next
-    })
-  }, [reviewIndex, reviewQueue.length])
+    if (editingKey) {
+      setConfirmedReports(prev => prev.map(r => r.key === editingKey ? updated : r))
+      setEditingKey(null)
+      setScreen('results')
+    } else {
+      setConfirmedReports(prev => {
+        const next = [...prev, updated]
+        if (reviewIndex + 1 >= reviewQueue.length) setScreen('results')
+        else setReviewIndex(i => i + 1)
+        return next
+      })
+    }
+  }, [editingKey, reviewIndex, reviewQueue.length])
 
   const handleReviewCancel = useCallback(() => {
     setScreen('home'); setShowSelector(false)
   }, [])
+
+  const handleEditReport = useCallback((report: EmployeeReport) => {
+    setReviewQueue([report])
+    setReviewIndex(0)
+    setEditingKey(report.key)
+    setScreen('review')
+  }, [])
+
+
 
   const dailyMin = toMin(carga) ?? 480
 
@@ -359,7 +376,8 @@ export default function App() {
       <div className="max-w-5xl mx-auto px-4 py-4 print:p-0 print:max-w-none space-y-5 print:space-y-0">
         {confirmedReports.map((report, i) => (
           <ReportCard key={report.key} report={report} month={month} carga={carga}
-            empresa={empresa} cnpj={cnpj} isLast={i === confirmedReports.length - 1} />
+            empresa={empresa} cnpj={cnpj} isLast={i === confirmedReports.length - 1}
+            onEdit={() => handleEditReport(report)} />
         ))}
       </div>
     </div>
