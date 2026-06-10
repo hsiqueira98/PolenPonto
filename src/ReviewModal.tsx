@@ -574,8 +574,13 @@ export function ReviewModal({ report: initialReport, dailyMinutes, onConfirm, on
                   className={`px-2.5 py-1.5 text-xs font-bold transition-colors ${prevBalanceSign === '+' ? 'bg-emerald-100 text-emerald-800' : 'text-honey-400 hover:bg-gold-50'}`}>+</button>
                 <button type="button" onClick={() => setPrevBalanceSign('-')}
                   className={`px-2.5 py-1.5 text-xs font-bold border-l border-gold-200 transition-colors ${prevBalanceSign === '-' ? 'bg-red-100 text-red-700' : 'text-honey-400 hover:bg-gold-50'}`}>−</button>
-                <input id="saldo-anterior" type="time" value={prevBalanceInput} onChange={e => setPrevBalanceInput(e.target.value)}
-                  className="w-[80px] border-l border-gold-200 px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-inset focus:ring-2 focus:ring-gold-300/50 bg-white" />
+                <input id="saldo-anterior" type="text" value={prevBalanceInput}
+                  onChange={e => {
+                    const v = e.target.value.replace(/[^\d:]/g, '')
+                    setPrevBalanceInput(v)
+                  }}
+                  placeholder="00:00"
+                  className="w-[72px] border-l border-gold-200 px-2 py-1.5 text-xs font-mono focus:outline-none focus:ring-inset focus:ring-2 focus:ring-gold-300/50 bg-white" />
               </div>
               {prevBalanceInput && (
                 <span className={`text-xs font-mono font-semibold ${prevBalanceSign === '-' ? 'text-red-600' : 'text-emerald-600'}`}>
