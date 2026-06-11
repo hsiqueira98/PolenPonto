@@ -246,9 +246,22 @@ function PrintPage({ report, month, carga, effectiveMin, empresa, cnpj, extras, 
     if (isFullDayAbsent(row)) {
       return (
         <tr style={{ background: isVac ? '#eff6ff' : bg }}>
-          <td style={{ ...s.td, textAlign: 'left', color: '#3a2d22' }}>{row.dayLabel}</td>
+          <td style={{ ...s.td, textAlign: 'left', color: '#3a2d22' }}>
+            {row.dayLabel}
+          </td>
           <td colSpan={6} style={{ ...s.td, fontWeight: 600, color: isVac ? '#1d4ed8' : row.absence === 'justified' ? '#b8932d' : '#c0392b' }}>
             {absenceLabel(row.absence!, row.absenceScope)}
+          </td>
+        </tr>
+      )
+    }
+
+    if (row.isHoliday && !row.absence) {
+      return (
+        <tr style={{ background: '#f3f4f6' }}>
+          <td style={{ ...s.td, textAlign: 'left', color: '#3a2d22' }}>{row.dayLabel}</td>
+          <td colSpan={6} style={{ ...s.td, fontWeight: 600, color: '#9ca3af', textAlign: 'center' }}>
+            Feriado
           </td>
         </tr>
       )
